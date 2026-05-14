@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -36,6 +37,7 @@ class _AudienceScreenState extends State<AudienceScreen> {
   bool _isFullScreen = false;
 
   final FocusNode _focusNode = FocusNode();
+  DateTime _lastWheelNav = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -98,6 +100,26 @@ class _AudienceScreenState extends State<AudienceScreen> {
     }
   }
 
+  void _requestKeyboardFocus() {
+    if (!_focusNode.hasFocus && mounted) {
+      _focusNode.requestFocus();
+    }
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (event.scrollDelta.dy.abs() < 8) return;
+
+    final now = DateTime.now();
+    if (now.difference(_lastWheelNav) < const Duration(milliseconds: 140)) {
+      return;
+    }
+    _lastWheelNav = now;
+    _requestKeyboardFocus();
+
+    _channel.sendNavigate(advance: event.scrollDelta.dy > 0);
+  }
+
   Set<int>? _buildVisibleIds(SlideData slide, int step) =>
       buildVisibleShapeIds(slide, step);
 
@@ -125,44 +147,50 @@ class _AudienceScreenState extends State<AudienceScreen> {
     final slide = pres.slides[idx];
     final visibleIds = _buildVisibleIds(slide, _animStep);
 
-    return KeyboardListener(
-      focusNode: _focusNode,
-      autofocus: true,
-      onKeyEvent: _onKey,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
-          children: [
-            Center(
-              child: AspectRatio(
-                aspectRatio: pres.canvasWidth / pres.canvasHeight,
-                child: FittedBox(
-                  fit: BoxFit.contain,
-                  child: SizedBox(
-                    width: pres.canvasWidth,
-                    height: pres.canvasHeight,
-                    child: SlideRenderer(
-                      slide: slide,
-                      presentation: pres,
-                      visibleIds: visibleIds,
-                      animStep: _animStep,
+    return Listener(
+      onPointerDown: (_) => _requestKeyboardFocus(),
+      onPointerSignal: _onPointerSignal,
+      child: KeyboardListener(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
+            children: [
+              Center(
+                child: AspectRatio(
+                  aspectRatio: pres.canvasWidth / pres.canvasHeight,
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: SizedBox(
+                      width: pres.canvasWidth,
+                      height: pres.canvasHeight,
+                      child: SlideRenderer(
+                        slide: slide,
+                        presentation: pres,
+                        visibleIds: visibleIds,
+                        animStep: _animStep,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
 
-            // Overlay: botão tela cheia (auto-fade)
-            Positioned(
-              top: 8,
-              right: 8,
-              child: _FadeButton(
-                icon: _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                tooltip: _isFullScreen ? 'Sair tela cheia' : 'Tela cheia',
-                onTap: _isFullScreen ? _exitFullScreen : _enterFullScreen,
+              // Overlay: botão tela cheia (auto-fade)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: _FadeButton(
+                  icon: _isFullScreen
+                      ? Icons.fullscreen_exit
+                      : Icons.fullscreen,
+                  tooltip: _isFullScreen ? 'Sair tela cheia' : 'Tela cheia',
+                  onTap: _isFullScreen ? _exitFullScreen : _enterFullScreen,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

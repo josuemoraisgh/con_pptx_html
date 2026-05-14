@@ -494,14 +494,25 @@ class PptxParser {
     return (x: x, y: y, cx: cx, cy: cy, rot: rot);
   }
 
+  String? _extractAltText(XmlElement? cNvPr) {
+    if (cNvPr == null) return null;
+    final descr = cNvPr.attr('descr');
+    if (descr != null && descr.trim().isNotEmpty) return descr.trim();
+    final title = cNvPr.attr('title');
+    if (title != null && title.trim().isNotEmpty) return title.trim();
+    final name = cNvPr.attr('name');
+    if (name != null && name.trim().isNotEmpty) return name.trim();
+    return null;
+  }
+
   // ── Shape (p:sp) ──────────────────────────────────────────────────────────
 
   ShapeElement? _parseSp(XmlElement sp, int zOrder, ColorResolver cr) {
     final spPr = sp.child('spPr');
     var xfrm = _parseXfrm(sp);
-    final shapeId =
-        int.tryParse(sp.child('nvSpPr')?.child('cNvPr')?.attr('id') ?? '') ?? 0;
-    final altText = sp.child('nvSpPr')?.child('cNvPr')?.attr('descr');
+    final cNvPr = sp.child('nvSpPr')?.child('cNvPr');
+    final shapeId = int.tryParse(cNvPr?.attr('id') ?? '') ?? 0;
+    final altText = _extractAltText(cNvPr);
 
     final ph = sp.child('nvSpPr')?.child('nvPr')?.child('ph');
     final placeholderType = ph?.attr('type');
@@ -595,9 +606,9 @@ class PptxParser {
     Map<String, String> rels,
   ) {
     final xfrm = _parseXfrm(pic);
-    final shapeId =
-        int.tryParse(pic.child('nvPicPr')?.child('cNvPr')?.attr('id') ?? '') ??
-        0;
+    final cNvPr = pic.child('nvPicPr')?.child('cNvPr');
+    final shapeId = int.tryParse(cNvPr?.attr('id') ?? '') ?? 0;
+    final altText = _extractAltText(cNvPr);
     final blipFill = pic.child('blipFill');
     final blip = blipFill?.child('blip');
     if (blip == null) return null;
@@ -617,6 +628,7 @@ class PptxParser {
       rotationDeg: xfrm.rot,
       shapeId: shapeId,
       imageBytes: bytes,
+      altText: altText,
     );
   }
 
@@ -813,6 +825,7 @@ class PptxParser {
           shapeId: el.shapeId,
           imageBytes: el.imageBytes,
           mimeType: el.mimeType,
+          altText: el.altText,
         );
       case TableElement():
         return TableElement(
@@ -919,6 +932,7 @@ class PptxParser {
           shapeId: id,
           imageBytes: el.imageBytes,
           mimeType: el.mimeType,
+          altText: el.altText,
         );
       case TableElement():
         return TableElement(

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -46,6 +47,7 @@ class _PresenterPanelState extends State<PresenterPanel> {
   late final Stopwatch _stopwatch;
   late final Timer _tick;
   final FocusNode _focusNode = FocusNode();
+  DateTime _lastWheelNav = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// Fração da largura total ocupada pelo painel direito (drag horizontal).
   double _rightPanelFraction = 0.32;
@@ -125,6 +127,30 @@ class _PresenterPanelState extends State<PresenterPanel> {
     }
   }
 
+  void _requestKeyboardFocus() {
+    if (!_focusNode.hasFocus && mounted) {
+      _focusNode.requestFocus();
+    }
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (event.scrollDelta.dy.abs() < 8) return;
+
+    final now = DateTime.now();
+    if (now.difference(_lastWheelNav) < const Duration(milliseconds: 140)) {
+      return;
+    }
+    _lastWheelNav = now;
+    _requestKeyboardFocus();
+
+    if (event.scrollDelta.dy > 0) {
+      widget.onAdvance();
+    } else {
+      widget.onRetreat();
+    }
+  }
+
   // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
@@ -135,105 +161,109 @@ class _PresenterPanelState extends State<PresenterPanel> {
     final next = _nextSlide;
     final visibleIds = _buildVisibleIds(current, widget.animStep);
 
-    return KeyboardListener(
-      focusNode: _focusNode,
-      autofocus: true,
-      onKeyEvent: _onKey,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF0D0D1A),
-        body: Column(
-          children: [
-            _buildTopBar(total),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (ctx, constraints) {
-                  final totalW = constraints.maxWidth;
-                  final rightW = (totalW * _rightPanelFraction).clamp(
-                    totalW * _minRightFraction,
-                    totalW * _maxRightFraction,
-                  );
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // ── Slide atual (grande) ──────────────────────────────
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
-                          child: Column(
-                            children: [
-                              Expanded(
-                                child: _buildCurrentSlide(
-                                  pres,
-                                  current,
-                                  visibleIds,
+    return Listener(
+      onPointerDown: (_) => _requestKeyboardFocus(),
+      onPointerSignal: _onPointerSignal,
+      child: KeyboardListener(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: Scaffold(
+          backgroundColor: const Color(0xFF0D0D1A),
+          body: Column(
+            children: [
+              _buildTopBar(total),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (ctx, constraints) {
+                    final totalW = constraints.maxWidth;
+                    final rightW = (totalW * _rightPanelFraction).clamp(
+                      totalW * _minRightFraction,
+                      totalW * _maxRightFraction,
+                    );
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // ── Slide atual (grande) ──────────────────────────────
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: _buildCurrentSlide(
+                                    pres,
+                                    current,
+                                    visibleIds,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(height: 8),
-                              _buildAnimDots(current),
-                            ],
+                                const SizedBox(height: 8),
+                                _buildAnimDots(current),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                      // ── Handle horizontal (redimensiona painel direito) ───
-                      _ResizeHandle(
-                        onDelta: (dx) {
-                          setState(() {
-                            _rightPanelFraction = ((rightW - dx) / totalW)
-                                .clamp(_minRightFraction, _maxRightFraction);
-                          });
-                        },
-                      ),
-                      // ── Painel direito ───────────────────────────────────
-                      SizedBox(
-                        width: rightW,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(4, 12, 12, 0),
-                          child: LayoutBuilder(
-                            builder: (ctx2, c2) {
-                              final h = c2.maxHeight;
-                              final nextH = (h * _nextSlideFraction).clamp(
-                                h * _minNextSlideFraction,
-                                h * _maxNextSlideFraction,
-                              );
-                              return Column(
-                                children: [
-                                  SizedBox(
-                                    height: nextH,
-                                    child: _buildNextSlide(pres, next),
-                                  ),
-                                  // ── Handle vertical (redimensiona notas) ──
-                                  _HorizontalResizeHandle(
-                                    onDelta: (dy) {
-                                      setState(() {
-                                        _nextSlideFraction = ((nextH + dy) / h)
-                                            .clamp(
-                                              _minNextSlideFraction,
-                                              _maxNextSlideFraction,
-                                            );
-                                      });
-                                    },
-                                  ),
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: 12,
-                                      ),
-                                      child: _buildNotes(current.notes),
+                        // ── Handle horizontal (redimensiona painel direito) ───
+                        _ResizeHandle(
+                          onDelta: (dx) {
+                            setState(() {
+                              _rightPanelFraction = ((rightW - dx) / totalW)
+                                  .clamp(_minRightFraction, _maxRightFraction);
+                            });
+                          },
+                        ),
+                        // ── Painel direito ───────────────────────────────────
+                        SizedBox(
+                          width: rightW,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(4, 12, 12, 0),
+                            child: LayoutBuilder(
+                              builder: (ctx2, c2) {
+                                final h = c2.maxHeight;
+                                final nextH = (h * _nextSlideFraction).clamp(
+                                  h * _minNextSlideFraction,
+                                  h * _maxNextSlideFraction,
+                                );
+                                return Column(
+                                  children: [
+                                    SizedBox(
+                                      height: nextH,
+                                      child: _buildNextSlide(pres, next),
                                     ),
-                                  ),
-                                ],
-                              );
-                            },
+                                    // ── Handle vertical (redimensiona notas) ──
+                                    _HorizontalResizeHandle(
+                                      onDelta: (dy) {
+                                        setState(() {
+                                          _nextSlideFraction =
+                                              ((nextH + dy) / h).clamp(
+                                                _minNextSlideFraction,
+                                                _maxNextSlideFraction,
+                                              );
+                                        });
+                                      },
+                                    ),
+                                    Expanded(
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 12,
+                                        ),
+                                        child: _buildNotes(current.notes),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  );
-                },
+                      ],
+                    );
+                  },
+                ),
               ),
-            ),
-            _buildNavBar(),
-          ],
+              _buildNavBar(),
+            ],
+          ),
         ),
       ),
     );

@@ -173,6 +173,7 @@ class ShapeElement extends SlideElement {
 class ImageElement extends SlideElement {
   final Uint8List? imageBytes;
   final String? mimeType;
+  final String? altText;
 
   const ImageElement({
     required super.xEmu,
@@ -184,6 +185,7 @@ class ImageElement extends SlideElement {
     super.shapeId,
     this.imageBytes,
     this.mimeType,
+    this.altText,
   });
 }
 

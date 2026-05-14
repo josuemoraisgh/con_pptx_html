@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -57,6 +58,7 @@ class _PresentationViewerState extends State<PresentationViewer> {
   final FocusNode _focusNode = FocusNode();
   late final PageController _pageController;
   final ScrollController _thumbScrollController = ScrollController();
+  DateTime _lastWheelNav = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -130,9 +132,33 @@ class _PresentationViewerState extends State<PresentationViewer> {
     }
 
     try {
-      await GoogleFonts.pendingFonts();
+      await GoogleFonts.pendingFonts().timeout(const Duration(seconds: 2));
     } catch (_) {}
     if (mounted) setState(() => _fontsReady = true);
+  }
+
+  void _requestKeyboardFocus() {
+    if (!_focusNode.hasFocus && mounted) {
+      _focusNode.requestFocus();
+    }
+  }
+
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    if (event.scrollDelta.dy.abs() < 8) return;
+
+    final now = DateTime.now();
+    if (now.difference(_lastWheelNav) < const Duration(milliseconds: 140)) {
+      return;
+    }
+    _lastWheelNav = now;
+    _requestKeyboardFocus();
+
+    if (event.scrollDelta.dy > 0) {
+      _advance();
+    } else {
+      _retreat();
+    }
   }
 
   @override
@@ -310,37 +336,41 @@ class _PresentationViewerState extends State<PresentationViewer> {
 
     // Modo normal
     final pres = widget.presentation;
-    return KeyboardListener(
-      focusNode: _focusNode,
-      autofocus: true,
-      onKeyEvent: _onKey,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF1E1E2E),
-        appBar: _isFullScreen ? null : _buildAppBar(pres),
-        body: _isFullScreen
-            ? _buildSlideArea(pres)
-            : LayoutBuilder(
-                builder: (ctx, constraints) {
-                  final maxW = constraints.maxWidth;
-                  if (!_showThumbnails) return _buildSlideArea(pres);
-                  final tw = _thumbWidth.clamp(100.0, maxW * 0.5);
-                  return Row(
-                    children: [
-                      SizedBox(width: tw, child: _buildThumbnailPanel(pres)),
-                      // Handle de redimensionamento
-                      _ThumbnailResizeHandle(
-                        onDelta: (dx) => setState(() {
-                          _thumbWidth = (_thumbWidth + dx).clamp(
-                            100.0,
-                            maxW * 0.5,
-                          );
-                        }),
-                      ),
-                      Expanded(child: _buildSlideArea(pres)),
-                    ],
-                  );
-                },
-              ),
+    return Listener(
+      onPointerDown: (_) => _requestKeyboardFocus(),
+      onPointerSignal: _onPointerSignal,
+      child: KeyboardListener(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: Scaffold(
+          backgroundColor: const Color(0xFF1E1E2E),
+          appBar: _isFullScreen ? null : _buildAppBar(pres),
+          body: _isFullScreen
+              ? _buildSlideArea(pres)
+              : LayoutBuilder(
+                  builder: (ctx, constraints) {
+                    final maxW = constraints.maxWidth;
+                    if (!_showThumbnails) return _buildSlideArea(pres);
+                    final tw = _thumbWidth.clamp(100.0, maxW * 0.5);
+                    return Row(
+                      children: [
+                        SizedBox(width: tw, child: _buildThumbnailPanel(pres)),
+                        // Handle de redimensionamento
+                        _ThumbnailResizeHandle(
+                          onDelta: (dx) => setState(() {
+                            _thumbWidth = (_thumbWidth + dx).clamp(
+                              100.0,
+                              maxW * 0.5,
+                            );
+                          }),
+                        ),
+                        Expanded(child: _buildSlideArea(pres)),
+                      ],
+                    );
+                  },
+                ),
+        ),
       ),
     );
   }
@@ -350,73 +380,77 @@ class _PresentationViewerState extends State<PresentationViewer> {
     final pres = widget.presentation;
     final slide = pres.slides[_currentIndex];
     final visibleIds = _buildVisibleIds(slide, _animStep);
-    return KeyboardListener(
-      focusNode: _focusNode,
-      autofocus: true,
-      onKeyEvent: _onKey,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
-          children: [
-            Center(
-              child: AspectRatio(
-                aspectRatio: pres.canvasWidth / pres.canvasHeight,
-                child: FittedBox(
-                  fit: BoxFit.contain,
-                  child: SizedBox(
-                    width: pres.canvasWidth,
-                    height: pres.canvasHeight,
-                    child: SlideRenderer(
-                      slide: slide,
-                      presentation: pres,
-                      visibleIds: visibleIds,
-                      animStep: _animStep,
+    return Listener(
+      onPointerDown: (_) => _requestKeyboardFocus(),
+      onPointerSignal: _onPointerSignal,
+      child: KeyboardListener(
+        focusNode: _focusNode,
+        autofocus: true,
+        onKeyEvent: _onKey,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
+            children: [
+              Center(
+                child: AspectRatio(
+                  aspectRatio: pres.canvasWidth / pres.canvasHeight,
+                  child: FittedBox(
+                    fit: BoxFit.contain,
+                    child: SizedBox(
+                      width: pres.canvasWidth,
+                      height: pres.canvasHeight,
+                      child: SlideRenderer(
+                        slide: slide,
+                        presentation: pres,
+                        visibleIds: visibleIds,
+                        animStep: _animStep,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            // Overlay: botões com auto-fade
-            Positioned(
-              top: 8,
-              right: 8,
-              child: _HoverButton(
-                icon: _isAudienceFullScreen
-                    ? Icons.fullscreen_exit
-                    : Icons.fullscreen,
-                tooltip: _isAudienceFullScreen
-                    ? 'Sair tela cheia'
-                    : 'Tela cheia',
-                onTap: () {
-                  if (_isAudienceFullScreen) {
-                    browser.exitFullscreen();
-                    setState(() => _isAudienceFullScreen = false);
-                  } else {
-                    browser.requestFullscreen();
-                    setState(() => _isAudienceFullScreen = true);
-                  }
-                },
+              // Overlay: botões com auto-fade
+              Positioned(
+                top: 8,
+                right: 8,
+                child: _HoverButton(
+                  icon: _isAudienceFullScreen
+                      ? Icons.fullscreen_exit
+                      : Icons.fullscreen,
+                  tooltip: _isAudienceFullScreen
+                      ? 'Sair tela cheia'
+                      : 'Tela cheia',
+                  onTap: () {
+                    if (_isAudienceFullScreen) {
+                      browser.exitFullscreen();
+                      setState(() => _isAudienceFullScreen = false);
+                    } else {
+                      browser.requestFullscreen();
+                      setState(() => _isAudienceFullScreen = true);
+                    }
+                  },
+                ),
               ),
-            ),
-            Positioned(
-              top: 8,
-              right: 52,
-              child: _HoverButton(
-                icon: Icons.swap_horiz,
-                tooltip: 'Trocar monitores',
-                onTap: _performSwap,
+              Positioned(
+                top: 8,
+                right: 52,
+                child: _HoverButton(
+                  icon: Icons.swap_horiz,
+                  tooltip: 'Trocar monitores',
+                  onTap: _performSwap,
+                ),
               ),
-            ),
-            Positioned(
-              top: 8,
-              right: 100,
-              child: _HoverButton(
-                icon: Icons.close,
-                tooltip: 'Encerrar modo apresentador',
-                onTap: _exitPresenterMode,
+              Positioned(
+                top: 8,
+                right: 100,
+                child: _HoverButton(
+                  icon: Icons.close,
+                  tooltip: 'Encerrar modo apresentador',
+                  onTap: _exitPresenterMode,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -577,13 +611,19 @@ class _PresentationViewerState extends State<PresentationViewer> {
               Expanded(
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
-                  onTap: _retreat,
+                  onTap: () {
+                    _requestKeyboardFocus();
+                    _retreat();
+                  },
                 ),
               ),
               Expanded(
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
-                  onTap: _advance,
+                  onTap: () {
+                    _requestKeyboardFocus();
+                    _advance();
+                  },
                 ),
               ),
             ],

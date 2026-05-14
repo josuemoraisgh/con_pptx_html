@@ -27,5 +27,9 @@ bool _isTitlePlaceholder(SlideElement element) {
   return element is ShapeElement &&
       (element.placeholderType == 'title' ||
           element.placeholderType == 'ctrTitle' ||
-          element.placeholderType == 'subTitle');
+          element.placeholderType == 'subTitle' ||
+          element.placeholderType == 'hdr' ||
+          element.placeholderType == 'ftr' ||
+          element.placeholderType == 'dt' ||
+          element.placeholderType == 'sldNum');
 }

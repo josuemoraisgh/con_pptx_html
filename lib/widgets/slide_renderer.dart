@@ -125,15 +125,16 @@ class SlideRenderer extends StatelessWidget {
     final geometry = el.presetGeometry ?? 'rect';
 
     // Detecta modo de borda pelo alt text
-    final at = el.altText ?? '';
+    final at = (el.altText ?? '').toLowerCase();
     final _BorderMode borderMode;
-    if (at.contains('Border: inferiores')) {
+    if (at.contains('border: inferiores') || at.contains('border: inferior')) {
       borderMode = _BorderMode.bottom;
-    } else if (at.contains('Border: superiores')) {
+    } else if (at.contains('border: superiores') ||
+        at.contains('border: superior')) {
       borderMode = _BorderMode.top;
-    } else if (at.contains('Border: left')) {
+    } else if (at.contains('border: left') || at.contains('border: esquerda')) {
       borderMode = _BorderMode.left;
-    } else if (at.contains('Border: right')) {
+    } else if (at.contains('border: right') || at.contains('border: direita')) {
       borderMode = _BorderMode.right;
     } else {
       borderMode = _BorderMode.all;
@@ -173,8 +174,9 @@ class SlideRenderer extends StatelessWidget {
 
     final hasPaint = (fill != null && fill is! NoFill) || outline != null;
 
+    Widget shapeBody;
     if (hasPaint) {
-      return CustomPaint(
+      shapeBody = CustomPaint(
         painter: _ShapePainter(
           geometry: geometry,
           fill: fill,
@@ -184,8 +186,15 @@ class SlideRenderer extends StatelessWidget {
         ),
         child: textWidget,
       );
+    } else {
+      shapeBody = textWidget;
     }
-    return textWidget;
+
+    final label = el.altText;
+    if (label != null && label.trim().isNotEmpty) {
+      return Semantics(label: label.trim(), child: shapeBody);
+    }
+    return shapeBody;
   }
 
   // ── Corpo de texto ────────────────────────────────────────────────────────
@@ -238,12 +247,12 @@ class SlideRenderer extends StatelessWidget {
       VerticalAlignment.bottom => Alignment.bottomLeft,
     };
 
-    return OverflowBox(
+    return Align(
       alignment: alignment,
-      maxWidth: availableWidth,
-      minHeight: 0,
-      maxHeight: double.infinity,
-      child: column,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: availableWidth),
+        child: column,
+      ),
     );
   }
 
@@ -360,13 +369,36 @@ class SlideRenderer extends StatelessWidget {
       decorationColor: rp.color,
       color: rp.color ?? Colors.black,
       height: lineHeight,
+      fontFamilyFallback: _fontFallbackFor(family),
     );
 
     try {
       return GoogleFonts.getFont(family, textStyle: baseStyle);
     } catch (_) {
-      return baseStyle;
+      return baseStyle.copyWith(fontFamily: _systemFallbackFamily(family));
     }
+  }
+
+  String _systemFallbackFamily(String family) {
+    final f = family.toLowerCase();
+    if (f.contains('mono') || f.contains('courier') || f.contains('consolas')) {
+      return 'Courier New';
+    }
+    if (f.contains('serif') || f.contains('lora') || f.contains('cambria')) {
+      return 'Times New Roman';
+    }
+    return 'Arial';
+  }
+
+  List<String> _fontFallbackFor(String family) {
+    final f = family.toLowerCase();
+    if (f.contains('mono') || f.contains('courier') || f.contains('consolas')) {
+      return const ['Consolas', 'Courier New', 'monospace'];
+    }
+    if (f.contains('serif') || f.contains('lora') || f.contains('cambria')) {
+      return const ['Cambria', 'Times New Roman', 'Georgia', 'serif'];
+    }
+    return const ['Inter', 'Segoe UI', 'Arial', 'Helvetica', 'sans-serif'];
   }
 
   /// Mapeia fontes comuns do PPTX para equivalentes disponíveis no Google
@@ -458,22 +490,28 @@ class SlideRenderer extends StatelessWidget {
   // ── Imagem ────────────────────────────────────────────────────────────────
 
   Widget _buildImage(ImageElement el) {
-    if (el.imageBytes == null) {
-      return Container(
-        color: Colors.grey.shade200,
-        child: const Center(
-          child: Icon(Icons.broken_image, color: Colors.grey),
-        ),
-      );
+    final image = el.imageBytes == null
+        ? Container(
+            color: Colors.grey.shade200,
+            child: const Center(
+              child: Icon(Icons.broken_image, color: Colors.grey),
+            ),
+          )
+        : Image.memory(
+            el.imageBytes!,
+            fit: BoxFit.fill,
+            errorBuilder: (context, error, stack) => Container(
+              color: Colors.grey.shade200,
+              child: const Center(child: Icon(Icons.broken_image)),
+            ),
+          );
+
+    final label = el.altText;
+    if (label != null && label.trim().isNotEmpty) {
+      return Semantics(label: label.trim(), image: true, child: image);
     }
-    return Image.memory(
-      el.imageBytes!,
-      fit: BoxFit.fill,
-      errorBuilder: (context, error, stack) => Container(
-        color: Colors.grey.shade200,
-        child: const Center(child: Icon(Icons.broken_image)),
-      ),
-    );
+
+    return image;
   }
 
   // ── Tabela ────────────────────────────────────────────────────────────────
