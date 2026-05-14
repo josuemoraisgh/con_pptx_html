@@ -6,6 +6,7 @@ import '../models/pptx_models.dart';
 import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
 import '../utils/animation_visibility.dart';
+import '../utils/deferred_hover_state.dart';
 import '../widgets/slide_renderer.dart';
 
 // A importação é circular aparente, mas presenter_panel.dart não importa
@@ -187,16 +188,15 @@ class _FadeButton extends StatefulWidget {
   State<_FadeButton> createState() => _FadeButtonState();
 }
 
-class _FadeButtonState extends State<_FadeButton> {
-  bool _hovered = false;
-
+class _FadeButtonState extends State<_FadeButton>
+    with DeferredHoverState<_FadeButton> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setHovered(true),
+      onExit: (_) => setHovered(false),
       child: AnimatedOpacity(
-        opacity: _hovered ? 0.9 : 0.15,
+        opacity: hovered ? 0.9 : 0.15,
         duration: const Duration(milliseconds: 200),
         child: Tooltip(
           message: widget.tooltip,

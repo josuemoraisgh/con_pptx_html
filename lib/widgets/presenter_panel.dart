@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../models/pptx_models.dart';
 import '../utils/animation_visibility.dart';
+import '../utils/deferred_hover_state.dart';
 import 'slide_renderer.dart';
 
 /// Painel completo do apresentador.
@@ -551,22 +552,21 @@ class _ResizeHandle extends StatefulWidget {
   State<_ResizeHandle> createState() => _ResizeHandleState();
 }
 
-class _ResizeHandleState extends State<_ResizeHandle> {
-  bool _hovered = false;
-
+class _ResizeHandleState extends State<_ResizeHandle>
+    with DeferredHoverState<_ResizeHandle> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
       cursor: SystemMouseCursors.resizeColumn,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setHovered(true),
+      onExit: (_) => setHovered(false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (d) => widget.onDelta(d.delta.dx),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           width: 8,
-          color: _hovered
+          color: hovered
               ? const Color(0xFF7C6AF7).withAlpha(180)
               : Colors.white12,
           child: Center(
@@ -574,7 +574,7 @@ class _ResizeHandleState extends State<_ResizeHandle> {
               width: 2,
               height: 40,
               decoration: BoxDecoration(
-                color: _hovered ? Colors.white70 : Colors.white24,
+                color: hovered ? Colors.white70 : Colors.white24,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -600,22 +600,21 @@ class _HorizontalResizeHandle extends StatefulWidget {
       _HorizontalResizeHandleState();
 }
 
-class _HorizontalResizeHandleState extends State<_HorizontalResizeHandle> {
-  bool _hovered = false;
-
+class _HorizontalResizeHandleState extends State<_HorizontalResizeHandle>
+    with DeferredHoverState<_HorizontalResizeHandle> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
       cursor: SystemMouseCursors.resizeRow,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setHovered(true),
+      onExit: (_) => setHovered(false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (d) => widget.onDelta(d.delta.dy),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           height: 8,
-          color: _hovered
+          color: hovered
               ? const Color(0xFF7C6AF7).withAlpha(180)
               : Colors.white12,
           child: Center(
@@ -623,7 +622,7 @@ class _HorizontalResizeHandleState extends State<_HorizontalResizeHandle> {
               height: 2,
               width: 40,
               decoration: BoxDecoration(
-                color: _hovered ? Colors.white70 : Colors.white24,
+                color: hovered ? Colors.white70 : Colors.white24,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),

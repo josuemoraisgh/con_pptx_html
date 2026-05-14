@@ -7,6 +7,7 @@ import '../models/pptx_models.dart';
 import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
 import '../utils/animation_visibility.dart';
+import '../utils/deferred_hover_state.dart';
 import 'presenter_panel.dart';
 import 'slide_renderer.dart';
 
@@ -730,16 +731,15 @@ class _HoverButton extends StatefulWidget {
   State<_HoverButton> createState() => _HoverButtonState();
 }
 
-class _HoverButtonState extends State<_HoverButton> {
-  bool _hovered = false;
-
+class _HoverButtonState extends State<_HoverButton>
+    with DeferredHoverState<_HoverButton> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setHovered(true),
+      onExit: (_) => setHovered(false),
       child: AnimatedOpacity(
-        opacity: _hovered ? 0.9 : 0.15,
+        opacity: hovered ? 0.9 : 0.15,
         duration: const Duration(milliseconds: 200),
         child: Tooltip(
           message: widget.tooltip,
@@ -767,18 +767,17 @@ class _NavButton extends StatefulWidget {
   State<_NavButton> createState() => _NavButtonState();
 }
 
-class _NavButtonState extends State<_NavButton> {
-  bool _hovered = false;
-
+class _NavButtonState extends State<_NavButton>
+    with DeferredHoverState<_NavButton> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setHovered(true),
+      onExit: (_) => setHovered(false),
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedOpacity(
-          opacity: _hovered ? 1.0 : 0.3,
+          opacity: hovered ? 1.0 : 0.3,
           duration: const Duration(milliseconds: 150),
           child: Container(
             width: 40,
@@ -807,22 +806,21 @@ class _ThumbnailResizeHandle extends StatefulWidget {
   State<_ThumbnailResizeHandle> createState() => _ThumbnailResizeHandleState();
 }
 
-class _ThumbnailResizeHandleState extends State<_ThumbnailResizeHandle> {
-  bool _hovered = false;
-
+class _ThumbnailResizeHandleState extends State<_ThumbnailResizeHandle>
+    with DeferredHoverState<_ThumbnailResizeHandle> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
       cursor: SystemMouseCursors.resizeColumn,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) => setHovered(true),
+      onExit: (_) => setHovered(false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (d) => widget.onDelta(d.delta.dx),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           width: 6,
-          color: _hovered
+          color: hovered
               ? const Color(0xFF7C6AF7).withAlpha(200)
               : Colors.white10,
           child: Center(
@@ -830,7 +828,7 @@ class _ThumbnailResizeHandleState extends State<_ThumbnailResizeHandle> {
               width: 2,
               height: 36,
               decoration: BoxDecoration(
-                color: _hovered ? Colors.white70 : Colors.white24,
+                color: hovered ? Colors.white70 : Colors.white24,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
