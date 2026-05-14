@@ -302,6 +302,12 @@ class TextBodyProperties {
   final double insetTopEmu;
   final double insetBottomEmu;
 
+  /// Escala aplicada à fonte (OOXML normAutofit/@fontScale, 1.0 = sem escala).
+  final double fontScale;
+
+  /// Redução de espaçamento entre linhas (OOXML normAutofit/@lnSpcReduction, 0.0 = sem redução).
+  final double lineSpaceReduction;
+
   const TextBodyProperties({
     this.vertAlign = VerticalAlignment.top,
     this.wordWrap = true,
@@ -309,6 +315,8 @@ class TextBodyProperties {
     this.insetRightEmu = 91440,
     this.insetTopEmu = 45720,
     this.insetBottomEmu = 45720,
+    this.fontScale = 1.0,
+    this.lineSpaceReduction = 0.0,
   });
 
   static const TextBodyProperties defaults = TextBodyProperties();

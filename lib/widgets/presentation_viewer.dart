@@ -67,31 +67,61 @@ class _PresentationViewerState extends State<PresentationViewer> {
   }
 
   /// Pré-carrega todas as fontes Google usadas na apresentação para evitar
-  /// layout shift quando as fontes chegam assincronamente.
+  /// layout shift quando as fontes chegam assincronamente. Mapeia nomes de
+  /// fontes do PPTX (Calibri, Cambria, etc.) para fontes equivalentes que
+  /// existem no Google Fonts e baixa todas as variantes usadas (regular,
+  /// bold, italic, boldItalic).
   Future<void> _preloadFonts() async {
     final pres = widget.presentation;
-    final fonts = <String>{};
-    if (pres.theme.majorFontLatin.isNotEmpty) fonts.add(pres.theme.majorFontLatin);
-    if (pres.theme.minorFontLatin.isNotEmpty) fonts.add(pres.theme.minorFontLatin);
+
+    // Coleta nomes brutos + variantes (bold/italic) realmente usadas.
+    final variants = <String, Set<int>>{}; // family -> bitmask: 1=bold, 2=italic
+
+    void register(String? raw, {bool bold = false, bool italic = false}) {
+      if (raw == null || raw.isEmpty) return;
+      // Resolve +mj-lt / +mn-lt
+      String resolved = raw;
+      if (raw.startsWith('+mj')) resolved = pres.theme.majorFontLatin;
+      if (raw.startsWith('+mn')) resolved = pres.theme.minorFontLatin;
+      final mapped = SlideRenderer.mapToSafeFont(resolved);
+      final mask = (bold ? 1 : 0) | (italic ? 2 : 0);
+      variants.putIfAbsent(mapped, () => <int>{}).add(mask);
+    }
+
+    register(pres.theme.majorFontLatin);
+    register(pres.theme.majorFontLatin, bold: true);
+    register(pres.theme.minorFontLatin);
+    register(pres.theme.minorFontLatin, bold: true);
+
     for (final slide in pres.slides) {
       for (final el in slide.elements) {
         if (el is ShapeElement) {
           for (final para in el.paragraphs) {
             for (final run in para.runs) {
-              final f = run.props.fontFamily;
-              if (f != null && f.isNotEmpty && !f.startsWith('+')) fonts.add(f);
+              register(run.props.fontFamily,
+                  bold: run.props.bold, italic: run.props.italic);
             }
           }
         }
       }
     }
-    // Inicia o download de cada fonte para acionar a fila do google_fonts
-    for (final f in fonts) {
-      try {
-        GoogleFonts.getFont(f);
-      } catch (_) {}
+
+    // Dispara o download de cada (family, weight, style) e aguarda.
+    for (final entry in variants.entries) {
+      final family = entry.key;
+      for (final mask in entry.value) {
+        final weight = (mask & 1) != 0 ? FontWeight.w700 : FontWeight.w400;
+        final style =
+            (mask & 2) != 0 ? FontStyle.italic : FontStyle.normal;
+        try {
+          GoogleFonts.getFont(
+            family,
+            textStyle: TextStyle(fontWeight: weight, fontStyle: style),
+          );
+        } catch (_) {}
+      }
     }
-    // Aguarda todos os downloads pendentes concluírem
+
     try {
       await GoogleFonts.pendingFonts();
     } catch (_) {}
@@ -584,8 +614,10 @@ class _PresentationViewerState extends State<PresentationViewer> {
   }
 
   /// Constrói o Set de shapeIds visíveis no step atual.
-  /// Se o slide não tem animações, retorna null (= tudo visível).
+  /// Em modo viewer normal (não-apresentador) retorna null (= tudo visível),
+  /// preservando as animações apenas no modo apresentador.
   Set<int>? _buildVisibleIds(SlideData slide, int step) {
+    if (!_isPresenterMode) return null;
     if (slide.animSteps.isEmpty) return null;
 
     // Coleta todos os IDs que aparecem em algum step

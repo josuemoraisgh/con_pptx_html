@@ -1097,6 +1097,16 @@ class PptxParser {
     final insetTop = double.tryParse(bodyPr.attr('tIns') ?? '') ?? 45720;
     final insetBottom = double.tryParse(bodyPr.attr('bIns') ?? '') ?? 45720;
 
+    double fontScale = 1.0;
+    double lineSpaceReduction = 0.0;
+    final normAutofit = bodyPr.child('normAutofit');
+    if (normAutofit != null) {
+      final fs = int.tryParse(normAutofit.attr('fontScale') ?? '');
+      if (fs != null) fontScale = fs / 100000.0;
+      final lsr = int.tryParse(normAutofit.attr('lnSpcReduction') ?? '');
+      if (lsr != null) lineSpaceReduction = lsr / 100000.0;
+    }
+
     return TextBodyProperties(
       vertAlign: vertAlign,
       wordWrap: wordWrap,
@@ -1104,6 +1114,8 @@ class PptxParser {
       insetRightEmu: insetRight,
       insetTopEmu: insetTop,
       insetBottomEmu: insetBottom,
+      fontScale: fontScale,
+      lineSpaceReduction: lineSpaceReduction,
     );
   }
 }

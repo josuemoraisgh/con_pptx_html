@@ -147,9 +147,27 @@ class SlideRenderer extends StatelessWidget {
     Widget textWidget = const SizedBox.shrink();
     if (el.paragraphs.isNotEmpty) {
       final availW = (width - insetL - insetR).clamp(0.0, double.infinity);
+      final availH = (height - insetT - insetB).clamp(0.0, double.infinity);
+      Widget body = _buildTextBody(el.paragraphs, el.bodyProps, pres, availW);
+      // Títulos: encolhe automaticamente para caber na caixa, evitando
+      // que "Comunicação Serial com ESP32" estoure o cabeçalho.
+      if (_isTitlePlaceholder(el.placeholderType)) {
+        body = SizedBox(
+          width: availW,
+          height: availH,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: _alignmentForVert(el.bodyProps.vertAlign),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: availW),
+              child: body,
+            ),
+          ),
+        );
+      }
       textWidget = Padding(
         padding: EdgeInsets.fromLTRB(insetL, insetT, insetR, insetB),
-        child: _buildTextBody(el.paragraphs, el.bodyProps, pres, availW),
+        child: body,
       );
     }
 
@@ -178,10 +196,14 @@ class SlideRenderer extends StatelessWidget {
     PresentationData pres,
     double availableWidth,
   ) {
+    final fontScale = bodyProps.fontScale;
+    final lineSpaceReduction = bodyProps.lineSpaceReduction;
     final column = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
-      children: paragraphs.map((p) => _buildParagraph(p, pres)).toList(),
+      children: paragraphs
+          .map((p) => _buildParagraph(p, pres, fontScale, lineSpaceReduction))
+          .toList(),
     );
 
     final alignment = switch (bodyProps.vertAlign) {
@@ -190,17 +212,21 @@ class SlideRenderer extends StatelessWidget {
       VerticalAlignment.bottom => Alignment.bottomLeft,
     };
 
-    return ClipRect(
-      child: OverflowBox(
-        alignment: alignment,
-        maxWidth: availableWidth,
-        maxHeight: double.infinity,
-        child: column,
-      ),
+    return OverflowBox(
+      alignment: alignment,
+      maxWidth: availableWidth,
+      minHeight: 0,
+      maxHeight: double.infinity,
+      child: column,
     );
   }
 
-  Widget _buildParagraph(TextParagraph para, PresentationData pres) {
+  Widget _buildParagraph(
+    TextParagraph para,
+    PresentationData pres, [
+    double fontScale = 1.0,
+    double lineSpaceReduction = 0.0,
+  ]) {
     final props = para.props;
 
     if (para.runs.isEmpty) {
@@ -214,7 +240,10 @@ class SlideRenderer extends StatelessWidget {
         spans.add(const TextSpan(text: '\n'));
         continue;
       }
-      spans.add(TextSpan(text: run.text, style: _runStyle(run.props, pres)));
+      spans.add(TextSpan(
+        text: run.text,
+        style: _runStyle(run.props, pres, fontScale, lineSpaceReduction),
+      ));
     }
 
     Widget textWidget = RichText(
@@ -263,9 +292,16 @@ class SlideRenderer extends StatelessWidget {
     return textWidget;
   }
 
-  TextStyle _runStyle(RunProperties rp, PresentationData pres) {
-    final fontSize = (rp.fontSizePt ?? 18.0).clamp(6.0, 200.0);
-    final family = _resolveFont(rp.fontFamily, pres);
+  TextStyle _runStyle(
+    RunProperties rp,
+    PresentationData pres, [
+    double fontScale = 1.0,
+    double lineSpaceReduction = 0.0,
+  ]) {
+    final fontSize =
+        ((rp.fontSizePt ?? 18.0) * fontScale).clamp(6.0, 200.0);
+    final family = _mapToSafeFont(_resolveFont(rp.fontFamily, pres));
+    final lineHeight = (1.2 * (1.0 - lineSpaceReduction)).clamp(0.8, 2.0);
 
     final baseStyle = TextStyle(
       fontSize: fontSize,
@@ -274,14 +310,59 @@ class SlideRenderer extends StatelessWidget {
       decoration: _textDecoration(rp),
       decorationColor: rp.color,
       color: rp.color ?? Colors.black,
-      height: 1.2,
+      height: lineHeight,
     );
 
-    if (family.isEmpty) return baseStyle;
     try {
       return GoogleFonts.getFont(family, textStyle: baseStyle);
     } catch (_) {
-      return baseStyle.copyWith(fontFamily: family);
+      return baseStyle;
+    }
+  }
+
+  /// Mapeia fontes comuns do PPTX para equivalentes disponíveis no Google
+  /// Fonts. Evita o "flash" causado por tentativas de carregar Calibri/Cambria
+  /// que não existem na CDN — assim o nome resolvido sempre é baixável e o
+  /// pre-load no PresentationViewer garante que tudo já está pronto.
+  static const Map<String, String> _safeFontMap = {
+    'calibri': 'Inter',
+    'calibri light': 'Inter',
+    'cambria': 'Lora',
+    'cambria math': 'Lora',
+    'arial': 'Inter',
+    'arial black': 'Inter',
+    'helvetica': 'Inter',
+    'times new roman': 'Lora',
+    'times': 'Lora',
+    'georgia': 'Lora',
+    'verdana': 'Inter',
+    'tahoma': 'Inter',
+    'segoe ui': 'Inter',
+    'consolas': 'JetBrains Mono',
+    'courier new': 'JetBrains Mono',
+    'courier': 'JetBrains Mono',
+    'comic sans ms': 'Inter',
+    'trebuchet ms': 'Inter',
+  };
+
+  static String mapToSafeFont(String name) {
+    if (name.isEmpty) return 'Inter';
+    return _safeFontMap[name.toLowerCase()] ?? name;
+  }
+
+  String _mapToSafeFont(String name) => mapToSafeFont(name);
+
+  bool _isTitlePlaceholder(String? t) =>
+      t == 'title' || t == 'ctrTitle' || t == 'subTitle';
+
+  Alignment _alignmentForVert(VerticalAlignment v) {
+    switch (v) {
+      case VerticalAlignment.top:
+        return Alignment.topLeft;
+      case VerticalAlignment.middle:
+        return Alignment.centerLeft;
+      case VerticalAlignment.bottom:
+        return Alignment.bottomLeft;
     }
   }
 
