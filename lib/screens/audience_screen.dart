@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:web/web.dart' as web;
 
 import '../models/pptx_models.dart';
+import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
+import '../utils/animation_visibility.dart';
 import '../widgets/slide_renderer.dart';
 
 // A importação é circular aparente, mas presenter_panel.dart não importa
@@ -68,12 +69,12 @@ class _AudienceScreenState extends State<AudienceScreen> {
   }
 
   void _enterFullScreen() {
-    web.document.documentElement?.requestFullscreen();
+    browser.requestFullscreen();
     setState(() => _isFullScreen = true);
   }
 
   void _exitFullScreen() {
-    web.document.exitFullscreen();
+    browser.exitFullscreen();
     setState(() => _isFullScreen = false);
   }
 
@@ -96,21 +97,8 @@ class _AudienceScreenState extends State<AudienceScreen> {
     }
   }
 
-  Set<int>? _buildVisibleIds(SlideData slide, int step) {
-    if (slide.animSteps.isEmpty) return null;
-    final allAnimated = <int>{};
-    for (final s in slide.animSteps) {
-      allAnimated.addAll(s);
-    }
-    final visible = <int>{};
-    for (final el in slide.elements) {
-      if (!allAnimated.contains(el.shapeId)) visible.add(el.shapeId);
-    }
-    for (var i = 0; i < slide.animSteps.length && i < step; i++) {
-      visible.addAll(slide.animSteps[i]);
-    }
-    return visible;
-  }
+  Set<int>? _buildVisibleIds(SlideData slide, int step) =>
+      buildVisibleShapeIds(slide, step);
 
   @override
   Widget build(BuildContext context) {

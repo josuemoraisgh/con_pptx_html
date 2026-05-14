@@ -2,10 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:web/web.dart' as web;
 
 import '../models/pptx_models.dart';
+import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
+import '../utils/animation_visibility.dart';
 import 'presenter_panel.dart';
 import 'slide_renderer.dart';
 
@@ -49,17 +50,19 @@ class _PresentationViewerState extends State<PresentationViewer> {
 
   PresenterChannel? _channel;
   StreamSubscription<PresenterMessage>? _channelSub;
-  web.Window? _audienceWindow;
+  browser.AudienceWindowHandle? _audienceWindow;
   // ─────────────────────────────────────────────────────────────────────────
 
   final FocusNode _focusNode = FocusNode();
-  final PageController _pageController = PageController();
+  late final PageController _pageController;
   final ScrollController _thumbScrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialSlide;
+    final maxIndex = widget.presentation.slides.length - 1;
+    _currentIndex = widget.initialSlide.clamp(0, maxIndex);
+    _pageController = PageController(initialPage: _currentIndex);
     _preloadFonts();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
@@ -75,7 +78,8 @@ class _PresentationViewerState extends State<PresentationViewer> {
     final pres = widget.presentation;
 
     // Coleta nomes brutos + variantes (bold/italic) realmente usadas.
-    final variants = <String, Set<int>>{}; // family -> bitmask: 1=bold, 2=italic
+    final variants =
+        <String, Set<int>>{}; // family -> bitmask: 1=bold, 2=italic
 
     void register(String? raw, {bool bold = false, bool italic = false}) {
       if (raw == null || raw.isEmpty) return;
@@ -98,8 +102,11 @@ class _PresentationViewerState extends State<PresentationViewer> {
         if (el is ShapeElement) {
           for (final para in el.paragraphs) {
             for (final run in para.runs) {
-              register(run.props.fontFamily,
-                  bold: run.props.bold, italic: run.props.italic);
+              register(
+                run.props.fontFamily,
+                bold: run.props.bold,
+                italic: run.props.italic,
+              );
             }
           }
         }
@@ -111,8 +118,7 @@ class _PresentationViewerState extends State<PresentationViewer> {
       final family = entry.key;
       for (final mask in entry.value) {
         final weight = (mask & 1) != 0 ? FontWeight.w700 : FontWeight.w400;
-        final style =
-            (mask & 2) != 0 ? FontStyle.italic : FontStyle.normal;
+        final style = (mask & 2) != 0 ? FontStyle.italic : FontStyle.normal;
         try {
           GoogleFonts.getFont(
             family,
@@ -207,6 +213,19 @@ class _PresentationViewerState extends State<PresentationViewer> {
     _channel ??= PresenterChannel();
     _channelSub ??= _channel!.messages.listen(_onChannelMessage);
     _audienceWindow = PresenterChannel.openAudienceWindow();
+    if (_audienceWindow == null) {
+      _channelSub?.cancel();
+      _channelSub = null;
+      _channel?.dispose();
+      _channel = null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível abrir a janela da plateia.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
     setState(() {
       _isPresenterMode = true;
       _swapped = false;
@@ -369,10 +388,10 @@ class _PresentationViewerState extends State<PresentationViewer> {
                     : 'Tela cheia',
                 onTap: () {
                   if (_isAudienceFullScreen) {
-                    web.document.exitFullscreen();
+                    browser.exitFullscreen();
                     setState(() => _isAudienceFullScreen = false);
                   } else {
-                    web.document.documentElement?.requestFullscreen();
+                    browser.requestFullscreen();
                     setState(() => _isAudienceFullScreen = true);
                   }
                 },
@@ -616,35 +635,8 @@ class _PresentationViewerState extends State<PresentationViewer> {
   /// Constrói o Set de shapeIds visíveis no step atual.
   /// Em modo viewer normal (não-apresentador) retorna null (= tudo visível),
   /// preservando as animações apenas no modo apresentador.
-  Set<int>? _buildVisibleIds(SlideData slide, int step) {
-    if (!_isPresenterMode) return null;
-    if (slide.animSteps.isEmpty) return null;
-
-    // Coleta todos os IDs que aparecem em algum step
-    final allAnimatedIds = <int>{};
-    for (final s in slide.animSteps) {
-      allAnimatedIds.addAll(s);
-    }
-
-    // IDs visíveis = os que não têm animação + os que já foram revelados
-    final visible = <int>{};
-    for (final el in slide.elements) {
-      // Placeholders de título/subtítulo sempre visíveis (não ocultados por animação)
-      if (el is ShapeElement && _isTitlePlaceholder(el.placeholderType)) {
-        visible.add(el.shapeId);
-      } else if (!allAnimatedIds.contains(el.shapeId)) {
-        visible.add(el.shapeId);
-      }
-    }
-    // Adiciona os que foram revelados até o step atual
-    for (var i = 0; i < slide.animSteps.length && i < step; i++) {
-      visible.addAll(slide.animSteps[i]);
-    }
-    return visible;
-  }
-
-  bool _isTitlePlaceholder(String? type) =>
-      type == 'title' || type == 'ctrTitle' || type == 'subTitle';
+  Set<int>? _buildVisibleIds(SlideData slide, int step) =>
+      _isPresenterMode ? buildVisibleShapeIds(slide, step) : null;
 
   Widget _buildProgressIndicator(int total) {
     return Row(
@@ -675,13 +667,13 @@ class _PresentationViewerState extends State<PresentationViewer> {
 
   void _enterFullScreen() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    web.document.documentElement?.requestFullscreen();
+    browser.requestFullscreen();
     setState(() => _isFullScreen = true);
   }
 
   void _exitFullScreen() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    web.document.exitFullscreen();
+    browser.exitFullscreen();
     setState(() => _isFullScreen = false);
   }
 

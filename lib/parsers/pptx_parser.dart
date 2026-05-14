@@ -69,6 +69,9 @@ class PptxParser {
   // ── Ponto de entrada ───────────────────────────────────────────────────────
 
   PresentationData parse(Uint8List pptxBytes) {
+    _files.clear();
+    _phMap.clear();
+
     // 1. Extrai ZIP
     final archive = ZipDecoder().decodeBytes(pptxBytes);
     for (final f in archive.files) {
@@ -358,28 +361,38 @@ class PptxParser {
     final spTree = doc.rootElement.deep('cSld')?.deep('spTree');
     if (spTree == null) return null;
 
-    final sb = StringBuffer();
-    for (final sp in spTree.children_('sp')) {
-      final ph = sp.child('nvSpPr')?.child('nvPr')?.child('ph');
-      if (ph == null) continue;
-      // Placeholder body (idx="1") contém as anotações reais; type="body" ou idx=1
-      final idx = ph.attr('idx');
-      final type = ph.attr('type');
-      if (idx != '1' && type != 'body' && idx != null) continue;
-      final txBody = sp.deep('txBody');
-      if (txBody == null) continue;
+    final preferred = StringBuffer();
+    final fallback = StringBuffer();
+
+    void appendParagraphs(StringBuffer target, XmlElement txBody) {
       for (final p in txBody.children_('p')) {
         final line = p
             .children_('r')
             .map((r) => r.child('t')?.innerText ?? '')
             .join('');
         if (line.isNotEmpty) {
-          if (sb.isNotEmpty) sb.write('\n');
-          sb.write(line);
+          if (target.isNotEmpty) target.write('\n');
+          target.write(line);
         }
       }
     }
-    return sb.isEmpty ? null : sb.toString();
+
+    for (final sp in spTree.children_('sp')) {
+      final ph = sp.child('nvSpPr')?.child('nvPr')?.child('ph');
+      final txBody = sp.deep('txBody');
+      if (txBody == null) continue;
+
+      final idx = ph?.attr('idx');
+      final type = ph?.attr('type');
+      if (idx == '1' || type == 'body') {
+        appendParagraphs(preferred, txBody);
+      } else if (type != 'dt' && type != 'ftr' && type != 'sldNum') {
+        appendParagraphs(fallback, txBody);
+      }
+    }
+
+    final result = preferred.isNotEmpty ? preferred : fallback;
+    return result.isEmpty ? null : result.toString();
   }
 
   // ── Fundo ────────────────────────────────────────────────────────────────
@@ -451,7 +464,7 @@ class PptxParser {
         final e = _parseCxnSp(el, zOrder, cr);
         return e != null ? [e] : [];
       case 'pic':
-        final e = _parsePic(el, zOrder, cr, rels);
+        final e = _parsePic(el, zOrder, rels);
         return e != null ? [e] : [];
       case 'graphicFrame':
         final e = _parseGraphicFrame(el, zOrder, cr);
@@ -579,7 +592,6 @@ class PptxParser {
   ImageElement? _parsePic(
     XmlElement pic,
     int zOrder,
-    ColorResolver cr,
     Map<String, String> rels,
   ) {
     final xfrm = _parseXfrm(pic);

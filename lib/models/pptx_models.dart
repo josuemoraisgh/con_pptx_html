@@ -21,9 +21,12 @@ class PresentationData {
   // Largura de canvas normalizada para 960 px
   double get canvasWidth => 960.0;
 
-  double get canvasHeight => canvasWidth * slideHeightEmu / slideWidthEmu;
+  double get canvasHeight => slideWidthEmu > 0
+      ? canvasWidth * slideHeightEmu / slideWidthEmu
+      : canvasWidth * 9 / 16;
 
-  double emuToPx(double emu) => emu * canvasWidth / slideWidthEmu;
+  double emuToPx(double emu) =>
+      slideWidthEmu > 0 ? emu * canvasWidth / slideWidthEmu : 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prepare_pptx.sh — Copia um .pptx para assets/presentation.pptx e compila
+# prepare_pptx.sh - Copia um .pptx para assets/presentation.pptx e compila
 #
 # Uso:
 #   chmod +x scripts/prepare_pptx.sh
@@ -9,7 +9,7 @@
 #   ./scripts/prepare_pptx.sh ~/Documentos/aula.pptx
 #   ./scripts/prepare_pptx.sh aula.pptx --build --base-href /minha-aula/
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -20,22 +20,37 @@ PPTX_PATH=""
 BASE_HREF="/"
 DO_BUILD=false
 
-for arg in "$@"; do
-  case "$arg" in
-    --build)      DO_BUILD=true ;;
-    --base-href=*)BASE_HREF="${arg#*=}" ;;
-    --base-href)  ;;
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --build)
+      DO_BUILD=true
+      shift
+      ;;
+    --base-href=*)
+      BASE_HREF="${1#*=}"
+      shift
+      ;;
+    --base-href)
+      if [ "$#" -lt 2 ]; then
+        echo "Erro: --base-href requer um valor" >&2
+        exit 1
+      fi
+      BASE_HREF="$2"
+      shift 2
+      ;;
+    -*)
+      echo "Erro: opcao desconhecida: $1" >&2
+      exit 1
+      ;;
     *)
-      if [ -z "$PPTX_PATH" ]; then PPTX_PATH="$arg"; fi
+      if [ -n "$PPTX_PATH" ]; then
+        echo "Erro: informe apenas um arquivo .pptx" >&2
+        exit 1
+      fi
+      PPTX_PATH="$1"
+      shift
       ;;
   esac
-done
-
-# Captura --base-href valor
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "--base-href" ]; then BASE_HREF="$arg"; fi
-  prev="$arg"
 done
 
 if [ -z "$PPTX_PATH" ]; then
@@ -48,25 +63,33 @@ if [ ! -f "$PPTX_PATH" ]; then
   exit 1
 fi
 
+case "${PPTX_PATH##*.}" in
+  pptx|PPTX) ;;
+  *)
+    echo "Erro: o arquivo deve ter extensao .pptx: $PPTX_PATH" >&2
+    exit 1
+    ;;
+esac
+
 mkdir -p "$ASSETS_DIR"
-echo "? Copiando: $(basename "$PPTX_PATH")"
-echo "  ? $DESTINATION"
+echo "-> Copiando: $(basename "$PPTX_PATH")"
+echo "   $DESTINATION"
 cp "$PPTX_PATH" "$DESTINATION"
 echo "  OK: $(du -k "$DESTINATION" | cut -f1) KB copiados"
 
 if $DO_BUILD; then
   echo ""
-  echo "? Compilando: flutter build web --wasm --base-href $BASE_HREF --release"
+  echo "-> Compilando: flutter build web --wasm --base-href $BASE_HREF --release"
   cd "$PROJECT_ROOT"
   flutter build web --wasm --base-href "$BASE_HREF" --release
   echo ""
-  echo "? Build concluido! Pasta pronta para publicar: build/web/"
+  echo "OK: Build concluido! Pasta pronta para publicar: build/web/"
   echo ""
   echo "  Para testar localmente:"
   echo "    cd build/web && python3 -m http.server 8080"
 else
   echo ""
-  echo "? Asset atualizado. Para compilar:"
+  echo "OK: Asset atualizado. Para compilar:"
   echo "    flutter build web --wasm --base-href $BASE_HREF --release"
   echo "  Ou: $0 $PPTX_PATH --build"
 fi

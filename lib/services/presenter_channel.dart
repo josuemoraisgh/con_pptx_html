@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:js_interop';
-import 'dart:js_interop_unsafe';
-import 'package:web/web.dart' as web;
+
+import '../platform/browser_runtime.dart' as browser;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mensagens
@@ -41,22 +40,19 @@ class PresenterNavigateMessage extends PresenterMessage {
 class PresenterChannel {
   static const _channelName = 'pptx_presenter';
 
-  late final web.BroadcastChannel _bc;
+  late final browser.BrowserMessenger _messenger;
   final _controller = StreamController<PresenterMessage>.broadcast();
+  StreamSubscription<Map<String, dynamic>>? _subscription;
 
   PresenterChannel() {
-    _bc = web.BroadcastChannel(_channelName);
-    _bc.onmessage = (web.MessageEvent e) {
-      _onMessage(e);
-    }.toJS;
+    _messenger = browser.BrowserMessenger(_channelName);
+    _subscription = _messenger.messages.listen(_onMessage);
   }
 
   Stream<PresenterMessage> get messages => _controller.stream;
 
-  void _onMessage(web.MessageEvent e) {
+  void _onMessage(Map<String, dynamic> raw) {
     try {
-      final raw = e.data.dartify();
-      if (raw is! Map) return;
       final type = raw['type'] as String?;
       switch (type) {
         case 'state':
@@ -90,13 +86,12 @@ class PresenterChannel {
   }
 
   void _post(Map<String, dynamic> data) {
-    try {
-      _bc.postMessage(data.jsify()!);
-    } catch (_) {}
+    _messenger.post(data);
   }
 
   void dispose() {
-    _bc.close();
+    _subscription?.cancel();
+    _messenger.dispose();
     _controller.close();
   }
 
@@ -105,32 +100,11 @@ class PresenterChannel {
   /// Retorna true se o browser indica múltiplos monitores conectados.
   /// Usa `window.screen.isExtended` (Chrome/Edge 100+).
   static bool get hasMultipleScreens {
-    try {
-      final screen = globalContext['screen'];
-      if (screen == null) return false;
-      final isExt = (screen as JSObject)['isExtended'];
-      if (isExt == null) return false;
-      // Verifica se é um boolean JS válido
-      if (!isExt.isA<JSBoolean>()) return false;
-      return (isExt as JSBoolean).toDart;
-    } catch (_) {
-      return false;
-    }
+    return browser.hasMultipleScreens;
   }
 
   /// Abre a janela da plateia posicionada no segundo monitor.
   /// Retorna a referência da janela aberta, ou null em caso de falha.
-  static web.Window? openAudienceWindow() {
-    try {
-      final sw = web.window.screen.width;
-      final sh = web.window.screen.height;
-      // left=sw posiciona a janela à direita do monitor principal
-      final features =
-          'width=$sw,height=$sh,left=$sw,top=0,'
-          'menubar=no,toolbar=no,location=no,status=no,scrollbars=no';
-      return web.window.open('/?view=audience', 'pptx_audience', features);
-    } catch (_) {
-      return null;
-    }
-  }
+  static browser.AudienceWindowHandle? openAudienceWindow() =>
+      browser.openAudienceWindow();
 }

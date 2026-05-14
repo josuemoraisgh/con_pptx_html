@@ -69,12 +69,7 @@ class ColorResolver {
 
   Color _mapSchemeToken(String token) {
     // Aliases OOXML: bg1=lt1, bg2=lt2, tx1=dk1, tx2=dk2
-    const aliases = {
-      'bg1': 'lt1',
-      'bg2': 'lt2',
-      'tx1': 'dk1',
-      'tx2': 'dk2',
-    };
+    const aliases = {'bg1': 'lt1', 'bg2': 'lt2', 'tx1': 'dk1', 'tx2': 'dk2'};
     final key = aliases[token] ?? token;
     return theme.colorScheme[key] ?? const Color(0xFF000000);
   }
@@ -248,7 +243,9 @@ ShapeLine? parseLine(XmlElement? ln, ColorResolver cr) {
   final solidFill = ln.child('solidFill');
   final color = solidFill != null ? cr.resolveColorElement(solidFill) : null;
   final wAttr = ln.attr('w');
-  final widthPt = wAttr != null ? (int.tryParse(wAttr) ?? 12700) / 12700.0 : 1.0;
+  final widthPt = wAttr != null
+      ? (int.tryParse(wAttr) ?? 12700) / 12700.0
+      : 1.0;
   if (color == null && solidFill == null) return null;
   return ShapeLine(color: color, widthPt: widthPt);
 }

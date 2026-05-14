@@ -198,12 +198,38 @@ class SlideRenderer extends StatelessWidget {
   ) {
     final fontScale = bodyProps.fontScale;
     final lineSpaceReduction = bodyProps.lineSpaceReduction;
+    final autoNumberByLevel = List<int>.filled(9, 0);
+    final children = <Widget>[];
+
+    for (final paragraph in paragraphs) {
+      String? autoNumber;
+      if (paragraph.props.bullet?.isAutoNum ?? false) {
+        final level = paragraph.props.level
+            .clamp(0, autoNumberByLevel.length - 1)
+            .toInt();
+        autoNumberByLevel[level]++;
+        for (var i = level + 1; i < autoNumberByLevel.length; i++) {
+          autoNumberByLevel[i] = 0;
+        }
+        autoNumber = '${autoNumberByLevel[level]}.';
+      }
+
+      children.add(
+        _buildParagraph(
+          paragraph,
+          pres,
+          fontScale,
+          lineSpaceReduction,
+          bodyProps.wordWrap,
+          autoNumber,
+        ),
+      );
+    }
+
     final column = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
-      children: paragraphs
-          .map((p) => _buildParagraph(p, pres, fontScale, lineSpaceReduction))
-          .toList(),
+      children: children,
     );
 
     final alignment = switch (bodyProps.vertAlign) {
@@ -226,8 +252,12 @@ class SlideRenderer extends StatelessWidget {
     PresentationData pres, [
     double fontScale = 1.0,
     double lineSpaceReduction = 0.0,
+    bool wordWrap = true,
+    String? autoNumber,
   ]) {
     final props = para.props;
+    final lineSpacingMultiplier = ((props.lineSpacingPct ?? 100.0) / 100.0)
+        .clamp(0.5, 3.0);
 
     if (para.runs.isEmpty) {
       final h = props.spaceBeforePt != null ? props.spaceBeforePt! * 0.5 : 4.0;
@@ -240,16 +270,24 @@ class SlideRenderer extends StatelessWidget {
         spans.add(const TextSpan(text: '\n'));
         continue;
       }
-      spans.add(TextSpan(
-        text: run.text,
-        style: _runStyle(run.props, pres, fontScale, lineSpaceReduction),
-      ));
+      spans.add(
+        TextSpan(
+          text: run.text,
+          style: _runStyle(
+            run.props,
+            pres,
+            fontScale,
+            lineSpaceReduction,
+            lineSpacingMultiplier,
+          ),
+        ),
+      );
     }
 
     Widget textWidget = RichText(
       text: TextSpan(children: spans),
       textAlign: props.alignment,
-      softWrap: true,
+      softWrap: wordWrap,
       overflow: TextOverflow.visible,
     );
 
@@ -259,14 +297,21 @@ class SlideRenderer extends StatelessWidget {
           ? pres.emuToPx(props.marLeftEmu!)
           : (props.level + 1) * 16.0;
 
-      if (props.bullet?.char != null) {
-        final bulletStyle = _bulletRunStyle(para, pres);
+      final bulletLabel = autoNumber ?? props.bullet?.char;
+      if (bulletLabel != null) {
+        final bulletStyle = _bulletRunStyle(
+          para,
+          pres,
+          fontScale,
+          lineSpaceReduction,
+          lineSpacingMultiplier,
+        );
         textWidget = Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
               width: indent.clamp(8.0, 48.0),
-              child: Text(props.bullet!.char!, style: bulletStyle),
+              child: Text(bulletLabel, style: bulletStyle),
             ),
             Expanded(child: textWidget),
           ],
@@ -297,11 +342,15 @@ class SlideRenderer extends StatelessWidget {
     PresentationData pres, [
     double fontScale = 1.0,
     double lineSpaceReduction = 0.0,
+    double lineSpacingMultiplier = 1.0,
   ]) {
-    final fontSize =
-        ((rp.fontSizePt ?? 18.0) * fontScale).clamp(6.0, 200.0);
+    final fontSize = ((rp.fontSizePt ?? 18.0) * fontScale).clamp(6.0, 200.0);
     final family = _mapToSafeFont(_resolveFont(rp.fontFamily, pres));
-    final lineHeight = (1.2 * (1.0 - lineSpaceReduction)).clamp(0.8, 2.0);
+    final lineHeight =
+        (1.2 * lineSpacingMultiplier * (1.0 - lineSpaceReduction)).clamp(
+          0.8,
+          3.0,
+        );
 
     final baseStyle = TextStyle(
       fontSize: fontSize,
@@ -366,10 +415,22 @@ class SlideRenderer extends StatelessWidget {
     }
   }
 
-  TextStyle _bulletRunStyle(TextParagraph para, PresentationData pres) {
+  TextStyle _bulletRunStyle(
+    TextParagraph para,
+    PresentationData pres,
+    double fontScale,
+    double lineSpaceReduction,
+    double lineSpacingMultiplier,
+  ) {
     final firstRun = para.runs.firstOrNull?.props ?? const RunProperties();
     final bulletColor = para.props.bullet?.color;
-    final style = _runStyle(firstRun, pres);
+    final style = _runStyle(
+      firstRun,
+      pres,
+      fontScale,
+      lineSpaceReduction,
+      lineSpacingMultiplier,
+    );
     return bulletColor != null ? style.copyWith(color: bulletColor) : style;
   }
 
@@ -425,25 +486,51 @@ class SlideRenderer extends StatelessWidget {
   ) {
     if (el.rows.isEmpty) return const SizedBox.shrink();
 
-    // Usa larguras do tblGrid; se ausente, distribui igualmente
-    List<double> colWidths;
-    if (el.colWidthsEmu.isNotEmpty) {
-      colWidths = el.colWidthsEmu.map(pres.emuToPx).toList();
-    } else {
-      final numCols = el.rows.fold(
+    final maxCols = el.rows.fold<int>(0, (max, row) {
+      final cols = row.cells.fold<int>(
         0,
-        (m, r) => r.cells.length > m ? r.cells.length : m,
+        (sum, cell) => sum + cell.gridSpan.clamp(1, 999).toInt(),
       );
-      final cw = numCols > 0 ? width / numCols : width;
-      colWidths = List.filled(numCols, cw);
+      return math.max(max, cols);
+    });
+    if (maxCols == 0) return const SizedBox.shrink();
+
+    var colWidths = el.colWidthsEmu.map(pres.emuToPx).toList();
+    if (colWidths.length < maxCols) {
+      final fallbackWidth = width / maxCols;
+      colWidths = [
+        ...colWidths,
+        ...List.filled(maxCols - colWidths.length, fallbackWidth),
+      ];
     }
 
-    final rowWidgets = el.rows.map((row) {
-      final rowH = pres.emuToPx(row.heightEmu);
+    final totalColWidth = colWidths.fold(0.0, (sum, w) => sum + w);
+    if (totalColWidth > 0 && width > 0) {
+      final scale = width / totalColWidth;
+      colWidths = colWidths.map((w) => w * scale).toList();
+    } else {
+      colWidths = List.filled(maxCols, width / maxCols);
+    }
+
+    var rowHeights = el.rows.map((row) => pres.emuToPx(row.heightEmu)).toList();
+    final totalRowHeight = rowHeights.fold(0.0, (sum, h) => sum + h);
+    if (totalRowHeight > 0 && height > 0) {
+      final scale = height / totalRowHeight;
+      rowHeights = rowHeights.map((h) => h * scale).toList();
+    } else {
+      rowHeights = List.filled(el.rows.length, height / el.rows.length);
+    }
+
+    final rowWidgets = <Widget>[];
+    for (var rowIndex = 0; rowIndex < el.rows.length; rowIndex++) {
+      final row = el.rows[rowIndex];
+      final rowH = rowHeights[rowIndex];
       var colIdx = 0;
       final cells = <Widget>[];
       for (final cell in row.cells) {
-        final span = cell.gridSpan.clamp(1, colWidths.length - colIdx);
+        final remainingCols = colWidths.length - colIdx;
+        if (remainingCols <= 0) break;
+        final span = cell.gridSpan.clamp(1, remainingCols).toInt();
         final cellW = colWidths
             .skip(colIdx)
             .take(span)
@@ -464,27 +551,30 @@ class SlideRenderer extends StatelessWidget {
               cell.paragraphs,
               TextBodyProperties.defaults,
               pres,
-              cellW - 8,
+              (cellW - 8).clamp(0.0, double.infinity),
             ),
           ),
         );
       }
-      return SizedBox(
-        height: rowH,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: cells,
+      rowWidgets.add(
+        SizedBox(
+          height: rowH,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: cells,
+          ),
         ),
       );
-    }).toList();
+    }
 
-    final totalH = el.rows.fold(0.0, (s, r) => s + pres.emuToPx(r.heightEmu));
     return SizedBox(
       width: width,
-      height: totalH,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: rowWidgets,
+      height: height,
+      child: ClipRect(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: rowWidgets,
+        ),
       ),
     );
   }

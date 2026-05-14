@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/pptx_models.dart';
+import '../utils/animation_visibility.dart';
 import 'slide_renderer.dart';
 
 /// Painel completo do apresentador.
@@ -105,21 +106,8 @@ class _PresenterPanelState extends State<PresenterPanel> {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  Set<int>? _buildVisibleIds(SlideData slide, int step) {
-    if (slide.animSteps.isEmpty) return null;
-    final allAnimated = <int>{};
-    for (final s in slide.animSteps) {
-      allAnimated.addAll(s);
-    }
-    final visible = <int>{};
-    for (final el in slide.elements) {
-      if (!allAnimated.contains(el.shapeId)) visible.add(el.shapeId);
-    }
-    for (var i = 0; i < slide.animSteps.length && i < step; i++) {
-      visible.addAll(slide.animSteps[i]);
-    }
-    return visible;
-  }
+  Set<int>? _buildVisibleIds(SlideData slide, int step) =>
+      buildVisibleShapeIds(slide, step);
 
   void _onKey(KeyEvent event) {
     if (event is! KeyDownEvent) return;
@@ -544,7 +532,7 @@ class _NavButton extends StatelessWidget {
       ),
       icon: Icon(icon, size: 22),
       label: Text(label, style: const TextStyle(fontSize: 14)),
-      onPressed: onTap,
+      onPressed: enabled ? onTap : null,
     );
   }
 }

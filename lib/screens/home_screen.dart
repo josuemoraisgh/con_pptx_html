@@ -1,1 +1,1 @@
-// Substituído por setup_screen.dart — mantido para compatibilidade histórica.
+// Replaced by setup_screen.dart. Kept to preserve historical imports.

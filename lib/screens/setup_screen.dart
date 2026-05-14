@@ -10,40 +10,42 @@ class SetupScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0F0F1A),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
-          child: Padding(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(40),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _Logo(),
-                const SizedBox(height: 48),
-                _StepsCard(),
-                const SizedBox(height: 32),
-                _CommandBox(
-                  label: 'Windows (PowerShell)',
-                  command:
-                      r'.\scripts\prepare_pptx.ps1 -PptxPath "sua_aula.pptx" -Build',
-                ),
-                const SizedBox(height: 16),
-                _CommandBox(
-                  label: 'Linux / macOS (bash)',
-                  command:
-                      'bash scripts/prepare_pptx.sh "sua_aula.pptx" --build',
-                ),
-                const SizedBox(height: 32),
-                const Text(
-                  'Após a compilação, o site gerado em build/web/ contém seus slides\npronto para hospedar no GitHub Pages — sem servidor, sem runtime.',
-                  style: TextStyle(
-                    color: Colors.white38,
-                    fontSize: 13,
-                    height: 1.6,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 680),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _Logo(),
+                  const SizedBox(height: 48),
+                  _StepsCard(),
+                  const SizedBox(height: 32),
+                  _CommandBox(
+                    label: 'Windows (PowerShell)',
+                    command:
+                        r'.\scripts\prepare_pptx.ps1 -PptxPath "sua_aula.pptx" -Build',
                   ),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  _CommandBox(
+                    label: 'Linux / macOS (bash)',
+                    command:
+                        'bash scripts/prepare_pptx.sh "sua_aula.pptx" --build',
+                  ),
+                  const SizedBox(height: 32),
+                  const Text(
+                    'Após a compilação, o site gerado em build/web/ contém seus slides\npronto para hospedar no GitHub Pages — sem servidor, sem runtime.',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 13,
+                      height: 1.6,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -55,38 +57,53 @@ class SetupScreen extends StatelessWidget {
 class _Logo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF7C6AF7), Color(0xFF4FC3F7)],
-            ),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Icon(Icons.slideshow, size: 36, color: Colors.white),
+    final mark = Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF7C6AF7), Color(0xFF4FC3F7)],
         ),
-        const SizedBox(width: 16),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              'PPTX → Web',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                letterSpacing: -0.5,
-              ),
-            ),
-            Text(
-              'Apresentações PowerPoint no browser, hospedadas no GitHub Pages',
-              style: TextStyle(color: Colors.white54, fontSize: 13),
-            ),
-          ],
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Icon(Icons.slideshow, size: 36, color: Colors.white),
+    );
+
+    const copy = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'PPTX → Web',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 28,
+            fontWeight: FontWeight.bold,
+            letterSpacing: -0.5,
+          ),
+        ),
+        Text(
+          'Apresentações PowerPoint no browser, hospedadas no GitHub Pages',
+          style: TextStyle(color: Colors.white54, fontSize: 13),
         ),
       ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 520) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [mark, const SizedBox(height: 16), copy],
+          );
+        }
+
+        return Row(
+          children: [
+            mark,
+            const SizedBox(width: 16),
+            const Expanded(child: copy),
+          ],
+        );
+      },
     );
   }
 }

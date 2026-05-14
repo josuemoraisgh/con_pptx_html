@@ -26,7 +26,11 @@ class _ErrorScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 const Text(
                   'Erro ao carregar o PPTX',
-                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Container(
@@ -39,7 +43,11 @@ class _ErrorScreen extends StatelessWidget {
                   ),
                   child: SelectableText(
                     error,
-                    style: const TextStyle(color: Colors.red, fontSize: 12, fontFamily: 'monospace'),
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ),
               ],
@@ -59,6 +67,9 @@ class ConPptxHtmlApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final emptyPresentation =
+        presentation != null && presentation!.slides.isEmpty;
+
     return MaterialApp(
       title: 'PPTX → Web',
       debugShowCheckedModeBanner: false,
@@ -70,11 +81,13 @@ class ConPptxHtmlApp extends StatelessWidget {
         textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
         scaffoldBackgroundColor: const Color(0xFF0F0F1A),
       ),
-      home: presentation != null
+      home: presentation != null && !emptyPresentation
           ? PresentationViewer(presentation: presentation!)
-          : parseError != null
-              ? _ErrorScreen(error: parseError!)
-              : const SetupScreen(),
+          : parseError != null || emptyPresentation
+          ? _ErrorScreen(
+              error: parseError ?? 'O PPTX não contém slides renderizáveis.',
+            )
+          : const SetupScreen(),
     );
   }
 }

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:web/web.dart' as web;
 
 import 'app.dart';
 import 'models/pptx_models.dart';
 import 'parsers/pptx_parser.dart';
+import 'platform/browser_runtime.dart' as browser;
 import 'screens/audience_screen.dart';
 
 void main() async {
@@ -21,12 +21,11 @@ void main() async {
   }
 
   // Detecta se esta janela é a janela da plateia (?view=audience)
-  final isAudience =
-      Uri.tryParse(web.window.location.href)?.queryParameters['view'] ==
-      'audience';
+  final isAudience = browser.isAudienceView;
+  final hasSlides = presentation?.slides.isNotEmpty ?? false;
 
   runApp(
-    isAudience && presentation != null
+    isAudience && presentation != null && hasSlides
         ? _AudienceApp(presentation: presentation)
         : ConPptxHtmlApp(presentation: presentation, parseError: parseError),
   );
