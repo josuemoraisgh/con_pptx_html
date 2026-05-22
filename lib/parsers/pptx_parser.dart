@@ -558,6 +558,7 @@ class PptxParser {
       zOrder: zOrder,
       rotationDeg: xfrm.rot,
       shapeId: shapeId,
+      commandText: null,
       presetGeometry: prstGeom,
       fill: fill,
       outline: outline,
@@ -590,6 +591,7 @@ class PptxParser {
       zOrder: zOrder,
       rotationDeg: xfrm.rot,
       shapeId: shapeId,
+      commandText: null,
       presetGeometry: prstGeom,
       fill: NoFill(),
       outline: outline,
@@ -627,6 +629,7 @@ class PptxParser {
       zOrder: zOrder,
       rotationDeg: xfrm.rot,
       shapeId: shapeId,
+      commandText: null,
       imageBytes: bytes,
       altText: altText,
     );
@@ -701,6 +704,7 @@ class PptxParser {
       cyEmu: xfrm.cy,
       zOrder: zOrder,
       shapeId: shapeId,
+      commandText: null,
       rows: rows,
       colWidthsEmu: colWidthsEmu,
     );
@@ -716,6 +720,7 @@ class PptxParser {
   ) {
     // ID do grupo (cNvPr/@id) — os filhos herdam este ID para que animações
     // que referenciam o grupo (spTgt spid="N") funcionem corretamente.
+    final groupAltText = _extractAltText(grp.child('nvGrpSpPr')?.child('cNvPr'));
     final groupId =
         int.tryParse(
           grp.child('nvGrpSpPr')?.child('cNvPr')?.attr('id') ?? '0',
@@ -757,15 +762,18 @@ class PptxParser {
       final els = _parseSpTreeChildList(child, zOrder, cr, rels);
       for (final el in els) {
         result.add(
-          _applyGroupTransform(
-            el,
-            grpX,
-            grpY,
-            chOffX,
-            chOffY,
-            scaleX,
-            scaleY,
-            zOrder,
+          _withCommandText(
+            _applyGroupTransform(
+              el,
+              grpX,
+              grpY,
+              chOffX,
+              chOffY,
+              scaleX,
+              scaleY,
+              zOrder,
+            ),
+            groupAltText,
           ),
         );
         zOrder++;
@@ -805,6 +813,7 @@ class PptxParser {
           zOrder: zOrder,
           rotationDeg: el.rotationDeg,
           shapeId: el.shapeId,
+          commandText: el.commandText,
           presetGeometry: el.presetGeometry,
           fill: el.fill,
           outline: el.outline,
@@ -823,6 +832,7 @@ class PptxParser {
           zOrder: zOrder,
           rotationDeg: el.rotationDeg,
           shapeId: el.shapeId,
+          commandText: el.commandText,
           imageBytes: el.imageBytes,
           mimeType: el.mimeType,
           altText: el.altText,
@@ -835,6 +845,7 @@ class PptxParser {
           cyEmu: newCy,
           zOrder: zOrder,
           shapeId: el.shapeId,
+          commandText: el.commandText,
           rows: el.rows,
           colWidthsEmu: el.colWidthsEmu,
         );
@@ -912,6 +923,7 @@ class PptxParser {
           zOrder: el.zOrder,
           rotationDeg: el.rotationDeg,
           shapeId: id,
+          commandText: el.commandText,
           presetGeometry: el.presetGeometry,
           fill: el.fill,
           outline: el.outline,
@@ -930,6 +942,7 @@ class PptxParser {
           zOrder: el.zOrder,
           rotationDeg: el.rotationDeg,
           shapeId: id,
+          commandText: el.commandText,
           imageBytes: el.imageBytes,
           mimeType: el.mimeType,
           altText: el.altText,
@@ -942,10 +955,73 @@ class PptxParser {
           cyEmu: el.cyEmu,
           zOrder: el.zOrder,
           shapeId: id,
+          commandText: el.commandText,
           rows: el.rows,
           colWidthsEmu: el.colWidthsEmu,
         );
     }
+  }
+
+  SlideElement _withCommandText(SlideElement el, String? commandText) {
+    final merged = _mergeCommandText(el.commandText, commandText);
+    if (merged == el.commandText) return el;
+    switch (el) {
+      case ShapeElement():
+        return ShapeElement(
+          xEmu: el.xEmu,
+          yEmu: el.yEmu,
+          cxEmu: el.cxEmu,
+          cyEmu: el.cyEmu,
+          zOrder: el.zOrder,
+          rotationDeg: el.rotationDeg,
+          shapeId: el.shapeId,
+          commandText: merged,
+          presetGeometry: el.presetGeometry,
+          fill: el.fill,
+          outline: el.outline,
+          paragraphs: el.paragraphs,
+          bodyProps: el.bodyProps,
+          adjValue: el.adjValue,
+          altText: el.altText,
+          placeholderType: el.placeholderType,
+        );
+      case ImageElement():
+        return ImageElement(
+          xEmu: el.xEmu,
+          yEmu: el.yEmu,
+          cxEmu: el.cxEmu,
+          cyEmu: el.cyEmu,
+          zOrder: el.zOrder,
+          rotationDeg: el.rotationDeg,
+          shapeId: el.shapeId,
+          commandText: merged,
+          imageBytes: el.imageBytes,
+          mimeType: el.mimeType,
+          altText: el.altText,
+        );
+      case TableElement():
+        return TableElement(
+          xEmu: el.xEmu,
+          yEmu: el.yEmu,
+          cxEmu: el.cxEmu,
+          cyEmu: el.cyEmu,
+          zOrder: el.zOrder,
+          shapeId: el.shapeId,
+          commandText: merged,
+          rows: el.rows,
+          colWidthsEmu: el.colWidthsEmu,
+        );
+    }
+  }
+
+  String? _mergeCommandText(String? current, String? incoming) {
+    final a = current?.trim();
+    final b = incoming?.trim();
+    if (b == null || b.isEmpty) return a;
+    if (a == null || a.isEmpty) return b;
+    if (a.contains(b)) return a;
+    if (b.contains(a)) return b;
+    return '$a $b';
   }
 
   // ── Corpo de texto ────────────────────────────────────────────────────────
@@ -1120,8 +1196,11 @@ class PptxParser {
 
     final insetLeft = double.tryParse(bodyPr.attr('lIns') ?? '') ?? 91440;
     final insetRight = double.tryParse(bodyPr.attr('rIns') ?? '') ?? 91440;
-    final insetTop = double.tryParse(bodyPr.attr('tIns') ?? '') ?? 45720;
-    final insetBottom = double.tryParse(bodyPr.attr('bIns') ?? '') ?? 45720;
+    // PowerPoint costuma renderizar caixas simples com margem vertical bem
+    // menor do que a margem padrão do esquema OOXML; usar 0 aqui aproxima o
+    // posicionamento visual dos blocos de texto do slide original.
+    final insetTop = double.tryParse(bodyPr.attr('tIns') ?? '') ?? 0;
+    final insetBottom = double.tryParse(bodyPr.attr('bIns') ?? '') ?? 0;
 
     double fontScale = 1.0;
     double lineSpaceReduction = 0.0;

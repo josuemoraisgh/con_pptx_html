@@ -41,6 +41,114 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.5/full/pyodide.js"></script>
+  <script>
+    window.__copilotPyodidePromise = null;
+    window.__copilotPyodide = null;
+
+    window.__copilotEnsurePyodide = async function () {
+      try {
+        if (window.__copilotPyodide) return true;
+        if (!window.__copilotPyodidePromise) {
+          if (typeof loadPyodide !== 'function') return false;
+          window.__copilotPyodidePromise = loadPyodide({
+            indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.5/full/'
+          });
+        }
+        window.__copilotPyodide = await window.__copilotPyodidePromise;
+        return !!window.__copilotPyodide;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    window.__copilotRunPython = async function (sourceCode) {
+      const ready = await window.__copilotEnsurePyodide();
+      if (!ready) {
+        return 'Pyodide indisponivel neste ambiente.';
+      }
+
+      try {
+        const py = window.__copilotPyodide;
+        await py.loadPackage('micropip');
+        py.globals.set('__copilot_input_code__', String(sourceCode ?? ''));
+        const result = await py.runPythonAsync(`
+import ast
+import io
+import sys
+import traceback
+import micropip
+
+_cop_out = io.StringIO()
+_cop_err = io.StringIO()
+_cop_prev_out, _cop_prev_err = sys.stdout, sys.stderr
+sys.stdout = _cop_out
+sys.stderr = _cop_err
+
+_cop_source = __copilot_input_code__
+
+# Auto-instala qualquer biblioteca importada que ainda não exista no ambiente.
+_cop_pkgmap = {'sklearn': 'scikit-learn', 'cv2': 'opencv-python', 'PIL': 'Pillow'}
+_cop_root_mods = []
+
+try:
+  _cop_import_tree = ast.parse(_cop_source, mode='exec')
+  for _cop_node in ast.walk(_cop_import_tree):
+    if isinstance(_cop_node, ast.Import):
+      for _cop_alias in _cop_node.names:
+        _cop_root_mods.append(_cop_alias.name.split('.')[0])
+    elif isinstance(_cop_node, ast.ImportFrom) and _cop_node.module:
+      _cop_root_mods.append(_cop_node.module.split('.')[0])
+except Exception:
+  # Se houver erro de sintaxe, o traceback final já vai mostrar; só não instala.
+  _cop_root_mods = []
+
+for _cop_mod in dict.fromkeys(_cop_root_mods):
+  _cop_mod = _cop_mod.strip()
+  if not _cop_mod:
+    continue
+  try:
+    __import__(_cop_mod)
+    continue
+  except Exception:
+    pass
+
+  _cop_pkg = _cop_pkgmap.get(_cop_mod, _cop_mod)
+  try:
+    await micropip.install(_cop_pkg)
+  except Exception as _cop_install_err:
+    print(f'Aviso: nao foi possivel instalar "{_cop_pkg}": {_cop_install_err}')
+
+try:
+    _cop_tree = ast.parse(_cop_source, mode='exec')
+    _cop_last = None
+    if _cop_tree.body and isinstance(_cop_tree.body[-1], ast.Expr):
+        _cop_expr = _cop_tree.body.pop()
+        exec(compile(_cop_tree, '<pyodide>', 'exec'), globals(), globals())
+        _cop_last = eval(
+            compile(ast.Expression(_cop_expr.value), '<pyodide>', 'eval'),
+            globals(),
+            globals(),
+        )
+        if _cop_last is not None:
+            print(repr(_cop_last))
+    else:
+        exec(compile(_cop_tree, '<pyodide>', 'exec'), globals(), globals())
+except Exception:
+    traceback.print_exc()
+finally:
+    sys.stdout = _cop_prev_out
+    sys.stderr = _cop_prev_err
+
+(_cop_out.getvalue() + _cop_err.getvalue()).rstrip('\\n')
+        `);
+        const output = String(result ?? '').trim();
+        return output.length > 0 ? output : '(sem saída)';
+      } catch (e) {
+        return `Erro ao executar Python: ${e}`;
+      }
+    };
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

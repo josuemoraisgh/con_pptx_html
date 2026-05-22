@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../models/pptx_models.dart';
+import '../platform/browser_runtime.dart' as browser;
 
 /// Renderiza um único slide como widget Flutter.
 class SlideRenderer extends StatelessWidget {
@@ -27,6 +29,7 @@ class SlideRenderer extends StatelessWidget {
   Widget build(BuildContext context) {
     final w = presentation.canvasWidth;
     final h = presentation.canvasHeight;
+    final renderables = _buildRenderables(presentation);
 
     return SizedBox(
       width: w,
@@ -35,11 +38,397 @@ class SlideRenderer extends StatelessWidget {
         clipBehavior: Clip.hardEdge,
         children: [
           _buildBackground(w, h),
-          ...([...slide.elements]..sort((a, b) => a.zOrder.compareTo(b.zOrder)))
-              .map((e) => _buildElement(e, presentation)),
+          ...renderables.map(
+            (entry) => switch (entry) {
+              _ElementRenderable() => _buildElement(
+                entry.element,
+                presentation,
+              ),
+              _OverlayRenderable() => _buildCommandOverlay(
+                entry.spec,
+                presentation,
+              ),
+            },
+          ),
         ],
       ),
     );
+  }
+
+  List<_RenderableEntry> _buildRenderables(PresentationData pres) {
+    final sorted = [...slide.elements]
+      ..sort((a, b) => a.zOrder.compareTo(b.zOrder));
+    final overlays = _buildCommandOverlays(sorted);
+    final hiddenElementKeys = overlays
+        .expand((overlay) => overlay.hiddenElementKeys)
+        .toSet();
+    final renderables = <_RenderableEntry>[];
+
+    for (final element in sorted) {
+      if (_shouldHideForCommandOverlay(element, hiddenElementKeys)) continue;
+      renderables.add(_ElementRenderable(element.zOrder.toDouble(), element));
+    }
+
+    renderables.addAll(
+      overlays.map(
+        (overlay) => _OverlayRenderable(overlay.zOrder + 0.5, overlay),
+      ),
+    );
+    renderables.sort((a, b) => a.zOrder.compareTo(b.zOrder));
+    return renderables;
+  }
+
+  List<_CommandOverlaySpec> _buildCommandOverlays(List<SlideElement> sorted) {
+    final byShapeId = <int, List<SlideElement>>{};
+    for (final element in sorted) {
+      if (element.shapeId == 0) continue;
+      byShapeId.putIfAbsent(element.shapeId, () => []).add(element);
+    }
+
+    final globalPyodideRunCandidates = sorted
+        .where((e) => _elementHasCommand(e, _AltCommand.pyodideRun))
+        .toList();
+    final globalPyodideAnswerCandidates = sorted
+        .where((e) => _elementHasCommand(e, _AltCommand.pyodideAnswer))
+        .toList();
+    final consumedGlobalPyodideElementKeys = <String>{};
+
+    final overlays = <_CommandOverlaySpec>[];
+    for (final entry in byShapeId.entries) {
+      final groupElements = entry.value;
+      final commands = groupElements
+          .expand(_extractCommandsFromElement)
+          .toSet();
+
+      final pyodideOverlay = _buildPyodideOverlayForGroup(
+        entry.key,
+        groupElements,
+        commands,
+        globalPyodideRunCandidates: globalPyodideRunCandidates,
+        globalPyodideAnswerCandidates: globalPyodideAnswerCandidates,
+        consumedGlobalPyodideElementKeys: consumedGlobalPyodideElementKeys,
+      );
+      if (pyodideOverlay != null) {
+        overlays.add(pyodideOverlay);
+        continue;
+      }
+
+      final arduinoOverlay = _buildArduinoOverlayForGroup(
+        entry.key,
+        groupElements,
+        commands,
+      );
+      if (arduinoOverlay != null) overlays.add(arduinoOverlay);
+    }
+    return overlays;
+  }
+
+  _CommandOverlaySpec? _buildArduinoOverlayForGroup(
+    int shapeId,
+    List<SlideElement> groupElements,
+    Set<_AltCommand> commands,
+  ) {
+    if (!commands.contains(_AltCommand.arduino)) return null;
+
+    final textShapes =
+        groupElements
+            .whereType<ShapeElement>()
+            .where((shape) => shape.paragraphs.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.zOrder.compareTo(b.zOrder));
+    if (textShapes.isEmpty) return null;
+
+    final sourceTexts = textShapes
+        .map(_extractOriginalTextPreservingLines)
+        .where((text) => text.isNotEmpty)
+        .toList();
+    if (sourceTexts.isEmpty) return null;
+
+    return _CommandOverlaySpec(
+      command: _AltCommand.arduino,
+      shapeId: shapeId,
+      zOrder: groupElements.last.zOrder.toDouble(),
+      bounds: _computeOverlayBounds(groupElements),
+      content: _concatenateCommandTexts(sourceTexts),
+      semanticsLabel: groupElements
+          .map(_elementLabelText)
+          .whereType<String>()
+          .where((text) => text.isNotEmpty)
+          .join(' '),
+      hiddenElementKeys: groupElements.map(_shapeKeyFor).toSet(),
+    );
+  }
+
+  _CommandOverlaySpec? _buildPyodideOverlayForGroup(
+    int shapeId,
+    List<SlideElement> groupElements,
+    Set<_AltCommand> commands, {
+    required List<SlideElement> globalPyodideRunCandidates,
+    required List<SlideElement> globalPyodideAnswerCandidates,
+    required Set<String> consumedGlobalPyodideElementKeys,
+  }) {
+    final hasAnyPyodide =
+        commands.contains(_AltCommand.pyodideCode) ||
+        commands.contains(_AltCommand.pyodideRun) ||
+        commands.contains(_AltCommand.pyodideAnswer);
+    if (!hasAnyPyodide) return null;
+
+    final codeElements = groupElements
+        .where((e) => _elementHasCommand(e, _AltCommand.pyodideCode))
+        .toList();
+    final runElements = groupElements
+        .where((e) => _elementHasCommand(e, _AltCommand.pyodideRun))
+        .toList();
+    final answerElements = groupElements
+        .where((e) => _elementHasCommand(e, _AltCommand.pyodideAnswer))
+        .toList();
+    if (codeElements.isEmpty) return null;
+
+    SlideElement? pickGlobalElement(List<SlideElement> candidates) {
+      for (final candidate in candidates) {
+        final key = _shapeKeyFor(candidate);
+        if (consumedGlobalPyodideElementKeys.contains(key)) continue;
+        final alreadyInGroup = groupElements.any((g) => _shapeKeyFor(g) == key);
+        if (alreadyInGroup) continue;
+        return candidate;
+      }
+      return null;
+    }
+
+    if (runElements.isEmpty) {
+      final globalRun = pickGlobalElement(globalPyodideRunCandidates);
+      if (globalRun != null) runElements.add(globalRun);
+    }
+    if (answerElements.isEmpty) {
+      final globalAnswer = pickGlobalElement(globalPyodideAnswerCandidates);
+      if (globalAnswer != null) answerElements.add(globalAnswer);
+    }
+
+    final workspaceElementsByKey = <String, SlideElement>{
+      for (final e in [...codeElements, ...runElements, ...answerElements])
+        _shapeKeyFor(e): e,
+    };
+    final workspaceElements = workspaceElementsByKey.values.toList();
+
+    for (final e in [...runElements, ...answerElements]) {
+      final key = _shapeKeyFor(e);
+      final alreadyInGroup = groupElements.any((g) => _shapeKeyFor(g) == key);
+      if (!alreadyInGroup) {
+        consumedGlobalPyodideElementKeys.add(key);
+      }
+    }
+
+    final codeTextShapes =
+        codeElements
+            .whereType<ShapeElement>()
+            .where((shape) => shape.paragraphs.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.zOrder.compareTo(b.zOrder));
+    final answerTextShapes =
+        answerElements
+            .whereType<ShapeElement>()
+            .where((shape) => shape.paragraphs.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.zOrder.compareTo(b.zOrder));
+    final runTextShapes =
+        runElements
+            .whereType<ShapeElement>()
+            .where((shape) => shape.paragraphs.isNotEmpty)
+            .toList()
+          ..sort((a, b) => a.zOrder.compareTo(b.zOrder));
+
+    final initialCode = _concatenateCommandTexts(
+      codeTextShapes
+          .map(_extractOriginalTextPreservingLines)
+          .where((text) => text.isNotEmpty)
+          .toList(),
+    );
+    if (initialCode.isEmpty) return null;
+
+    final initialOutput = answerTextShapes.isEmpty
+        ? ''
+        : _concatenateCommandTexts(
+            answerTextShapes
+                .map(_extractOriginalTextPreservingLines)
+                .where((text) => text.isNotEmpty)
+                .toList(),
+          );
+    final runLabel = runTextShapes.isEmpty
+        ? 'Executar'
+        : _concatenateCommandTexts(
+            runTextShapes
+                .map(_extractOriginalTextPreservingLines)
+                .where((text) => text.isNotEmpty)
+                .toList(),
+          );
+
+    final groupBounds = _computeOverlayBounds(workspaceElements);
+    final codeBounds = _computeOverlayBounds(codeElements);
+    final answerBounds = answerElements.isEmpty
+        ? null
+        : _computeOverlayBounds(answerElements);
+    final runBounds = runElements.isEmpty
+        ? _defaultRunBoundsForPyodide(
+            groupBounds: groupBounds,
+            codeBounds: codeBounds,
+            answerBounds: answerBounds,
+          )
+        : _computeOverlayBounds(runElements);
+
+    return _CommandOverlaySpec(
+      command: _AltCommand.pyodideWorkspace,
+      shapeId: shapeId,
+      zOrder: workspaceElements
+          .map((e) => e.zOrder)
+          .reduce(math.max)
+          .toDouble(),
+      bounds: groupBounds,
+      semanticsLabel: workspaceElements
+          .map(_elementLabelText)
+          .whereType<String>()
+          .where((text) => text.isNotEmpty)
+          .join(' '),
+      hiddenElementKeys: {
+        ...groupElements.map(_shapeKeyFor),
+        ...workspaceElements.map(_shapeKeyFor),
+      },
+      pyodideLayout: _PyodideLayoutSpec(
+        groupBounds: groupBounds,
+        codeBounds: codeBounds,
+        runBounds: runBounds,
+        answerBounds: answerBounds,
+        initialCode: initialCode,
+        initialOutput: initialOutput,
+        runLabel: runLabel.trim().isEmpty ? 'Executar' : runLabel.trim(),
+      ),
+    );
+  }
+
+  _OverlayBounds _defaultRunBoundsForPyodide({
+    required _OverlayBounds groupBounds,
+    required _OverlayBounds codeBounds,
+    required _OverlayBounds? answerBounds,
+  }) {
+    const double gap = 25000.0;
+    final buttonHeight = (codeBounds.cyEmu * 0.10)
+        .clamp(90000.0, 220000.0)
+        .toDouble();
+
+    final groupBottom = groupBounds.yEmu + groupBounds.cyEmu;
+    final belowTop = codeBounds.yEmu + codeBounds.cyEmu + gap;
+
+    // Prefere abaixo do código; se não cabe no grupo, flutua na borda
+    // inferior interna do code box (overlay).
+    final yEmu = (belowTop + buttonHeight <= groupBottom + gap)
+        ? belowTop
+        : codeBounds.yEmu + codeBounds.cyEmu - buttonHeight - gap;
+
+    return _OverlayBounds(
+      xEmu: codeBounds.xEmu,
+      yEmu: yEmu,
+      cxEmu: codeBounds.cxEmu,
+      cyEmu: buttonHeight,
+    );
+  }
+
+  bool _elementHasCommand(SlideElement element, _AltCommand command) {
+    return _extractCommandsFromElement(element).contains(command);
+  }
+
+  bool _shouldHideForCommandOverlay(
+    SlideElement element,
+    Set<String> hiddenElementKeys,
+  ) {
+    return hiddenElementKeys.contains(_shapeKeyFor(element));
+  }
+
+  Set<_AltCommand> _extractCommandsFromElement(SlideElement element) {
+    final sourceText = [
+      element.commandText,
+      switch (element) {
+        ShapeElement() => element.altText,
+        ImageElement() => element.altText,
+        TableElement() => null,
+      },
+    ].whereType<String>().join(' ');
+    return _extractCommands(sourceText);
+  }
+
+  Set<_AltCommand> _extractCommands(String? altText) {
+    if (altText == null || altText.isEmpty) return const {};
+    final commands = <_AltCommand>{};
+    for (final match in RegExp(r'\{([^{}]+)\}').allMatches(altText)) {
+      switch (match.group(1)?.trim().toLowerCase()) {
+        case 'arduino':
+          commands.add(_AltCommand.arduino);
+        case 'pyodide_code':
+          commands.add(_AltCommand.pyodideCode);
+        case 'pyodide_run':
+          commands.add(_AltCommand.pyodideRun);
+        case 'pyodide_awnser':
+          commands.add(_AltCommand.pyodideAnswer);
+        case 'pyodide_answer':
+          commands.add(_AltCommand.pyodideAnswer);
+      }
+    }
+    return commands;
+  }
+
+  _OverlayBounds _computeOverlayBounds(List<SlideElement> elements) {
+    var left = double.infinity;
+    var top = double.infinity;
+    var right = double.negativeInfinity;
+    var bottom = double.negativeInfinity;
+
+    for (final element in elements) {
+      left = math.min(left, element.xEmu);
+      top = math.min(top, element.yEmu);
+      right = math.max(right, element.xEmu + element.cxEmu);
+      bottom = math.max(bottom, element.yEmu + element.cyEmu);
+    }
+
+    return _OverlayBounds(
+      xEmu: left.isFinite ? left : 0,
+      yEmu: top.isFinite ? top : 0,
+      cxEmu: left.isFinite && right.isFinite ? right - left : 0,
+      cyEmu: top.isFinite && bottom.isFinite ? bottom - top : 0,
+    );
+  }
+
+  String _extractOriginalTextPreservingLines(ShapeElement shape) {
+    final buffer = StringBuffer();
+    for (var i = 0; i < shape.paragraphs.length; i++) {
+      if (i > 0) buffer.write('\n');
+      for (final run in shape.paragraphs[i].runs) {
+        buffer.write(run.text);
+      }
+    }
+    return buffer.toString();
+  }
+
+  String _concatenateCommandTexts(List<String> parts) {
+    final buffer = StringBuffer();
+    for (var i = 0; i < parts.length; i++) {
+      if (i > 0 &&
+          buffer.isNotEmpty &&
+          !buffer.toString().endsWith('\n') &&
+          !parts[i].startsWith('\n')) {
+        buffer.write('\n');
+      }
+      buffer.write(parts[i]);
+    }
+    return buffer.toString();
+  }
+
+  String _shapeKeyFor(SlideElement element) =>
+      '${element.shapeId}:${element.zOrder}:${element.xEmu}:${element.yEmu}:${element.cxEmu}:${element.cyEmu}';
+
+  String? _elementLabelText(SlideElement element) {
+    return switch (element) {
+      ShapeElement() => element.altText ?? element.commandText,
+      ImageElement() => element.altText ?? element.commandText,
+      TableElement() => element.commandText,
+    };
   }
 
   // ── Fundo ────────────────────────────────────────────────────────────────
@@ -150,22 +539,20 @@ class SlideRenderer extends StatelessWidget {
       final availW = (width - insetL - insetR).clamp(0.0, double.infinity);
       final availH = (height - insetT - insetB).clamp(0.0, double.infinity);
       Widget body = _buildTextBody(el.paragraphs, el.bodyProps, pres, availW);
-      // Títulos: encolhe automaticamente para caber na caixa, evitando
-      // que "Comunicação Serial com ESP32" estoure o cabeçalho.
-      if (_isTitlePlaceholder(el.placeholderType)) {
-        body = SizedBox(
-          width: availW,
-          height: availH,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: _alignmentForVert(el.bodyProps.vertAlign),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: availW),
-              child: body,
-            ),
+      // Encolhe automaticamente o bloco de texto para caber na área útil
+      // da caixa e evitar overflow visual em layouts densos.
+      body = SizedBox(
+        width: availW,
+        height: availH,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: _alignmentForVert(el.bodyProps.vertAlign),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: availW),
+            child: body,
           ),
-        );
-      }
+        ),
+      );
       textWidget = Padding(
         padding: EdgeInsets.fromLTRB(insetL, insetT, insetR, insetB),
         child: body,
@@ -195,6 +582,151 @@ class SlideRenderer extends StatelessWidget {
       return Semantics(label: label.trim(), child: shapeBody);
     }
     return shapeBody;
+  }
+
+  Widget _buildCommandOverlay(_CommandOverlaySpec spec, PresentationData pres) {
+    final left = pres.emuToPx(spec.bounds.xEmu);
+    final top = pres.emuToPx(spec.bounds.yEmu);
+    final width = pres.emuToPx(spec.bounds.cxEmu);
+    final height = pres.emuToPx(spec.bounds.cyEmu);
+
+    if (width <= 0 || height <= 0) return const SizedBox.shrink();
+
+    final content = _buildCommandContent(spec);
+    final child = spec.command == _AltCommand.pyodideWorkspace
+        ? content
+        : spec.semanticsLabel.isEmpty
+        ? content
+        : Semantics(label: spec.semanticsLabel, readOnly: true, child: content);
+
+    return Positioned(
+      left: left,
+      top: top,
+      width: width,
+      height: height,
+      child: AnimatedOpacity(
+        opacity: visibleIds == null || visibleIds!.contains(spec.shapeId)
+            ? 1.0
+            : 0.0,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeIn,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildCommandContent(_CommandOverlaySpec spec) {
+    if (spec.command == _AltCommand.pyodideWorkspace) {
+      final layout = spec.pyodideLayout;
+      if (layout == null) return const SizedBox.shrink();
+      return _PyodideCommandOverlay(layout: layout);
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        color: Colors.black,
+        padding: const EdgeInsets.all(16),
+        child: Scrollbar(
+          thumbVisibility: true,
+          notificationPredicate: (notification) => notification.depth == 0,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.vertical,
+            child: Text.rich(
+              TextSpan(
+                children: switch (spec.command) {
+                  _AltCommand.arduino => _highlightArduinoCode(spec.content),
+                  _AltCommand.pyodideWorkspace => const [TextSpan(text: '')],
+                  _AltCommand.pyodideCode => const [TextSpan(text: '')],
+                  _AltCommand.pyodideRun => const [TextSpan(text: '')],
+                  _AltCommand.pyodideAnswer => const [TextSpan(text: '')],
+                },
+              ),
+              style: const TextStyle(
+                fontSize: 20,
+                fontFamily: 'Consolas',
+                fontFamilyFallback: ['Courier New', 'monospace'],
+                height: 1.35,
+                color: Color(0xFFD4D4D4),
+              ),
+              textAlign: TextAlign.start,
+              softWrap: true,
+              overflow: TextOverflow.visible,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<InlineSpan> _highlightArduinoCode(String source) {
+    if (source.isEmpty) return const [TextSpan(text: '')];
+
+    final spans = <InlineSpan>[];
+    final tokenPattern = RegExp(
+      r'''(//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|#[A-Za-z_][A-Za-z0-9_]*|\r\n|\r|\n|.)''',
+      multiLine: true,
+    );
+
+    for (final match in tokenPattern.allMatches(source)) {
+      final token = match.group(0)!;
+      spans.add(TextSpan(text: token, style: _arduinoTokenStyle(token)));
+    }
+    return spans;
+  }
+
+  TextStyle _arduinoTokenStyle(String token) {
+    const base = TextStyle(color: Color(0xFFD4D4D4));
+
+    if (token.startsWith('//') || token.startsWith('/*')) {
+      return base.copyWith(
+        color: const Color(0xFF6A9955),
+        fontStyle: FontStyle.italic,
+      );
+    }
+    if (token.startsWith('"') || token.startsWith('\'')) {
+      return base.copyWith(color: const Color(0xFFCE9178));
+    }
+    if (token.startsWith('#')) {
+      return base.copyWith(
+        color: const Color(0xFFC586C0),
+        fontWeight: FontWeight.w600,
+      );
+    }
+    if (RegExp(r'^\d').hasMatch(token)) {
+      return base.copyWith(color: const Color(0xFFB5CEA8));
+    }
+    if (_arduinoKeywords.contains(token)) {
+      return base.copyWith(
+        color: const Color(0xFF569CD6),
+        fontWeight: FontWeight.w600,
+      );
+    }
+    if (_arduinoTypes.contains(token)) {
+      return base.copyWith(
+        color: const Color(0xFF4EC9B0),
+        fontWeight: FontWeight.w600,
+      );
+    }
+    if (_arduinoConstants.contains(token)) {
+      return base.copyWith(
+        color: const Color(0xFFDCDCAA),
+        fontWeight: FontWeight.w600,
+      );
+    }
+    if (_looksLikeFunctionName(token)) {
+      return base.copyWith(color: const Color(0xFFDCDCAA));
+    }
+
+    return base;
+  }
+
+  bool _looksLikeFunctionName(String token) {
+    return RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(token) &&
+        !_arduinoKeywords.contains(token) &&
+        !_arduinoTypes.contains(token) &&
+        !_arduinoConstants.contains(token) &&
+        token[0] == token[0].toLowerCase();
   }
 
   // ── Corpo de texto ────────────────────────────────────────────────────────
@@ -375,7 +907,15 @@ class SlideRenderer extends StatelessWidget {
     try {
       return GoogleFonts.getFont(family, textStyle: baseStyle);
     } catch (_) {
-      return baseStyle.copyWith(fontFamily: _systemFallbackFamily(family));
+      final f = family.toLowerCase();
+      final preferredFamily =
+          f.contains('consolas') ||
+              f.contains('courier') ||
+              f.contains('arial') ||
+              f.contains('times new roman')
+          ? family
+          : _systemFallbackFamily(family);
+      return baseStyle.copyWith(fontFamily: preferredFamily);
     }
   }
 
@@ -419,9 +959,6 @@ class SlideRenderer extends StatelessWidget {
     'verdana': 'Inter',
     'tahoma': 'Inter',
     'segoe ui': 'Inter',
-    'consolas': 'JetBrains Mono',
-    'courier new': 'JetBrains Mono',
-    'courier': 'JetBrains Mono',
     'comic sans ms': 'Inter',
     'trebuchet ms': 'Inter',
   };
@@ -432,9 +969,6 @@ class SlideRenderer extends StatelessWidget {
   }
 
   String _mapToSafeFont(String name) => mapToSafeFont(name);
-
-  bool _isTitlePlaceholder(String? t) =>
-      t == 'title' || t == 'ctrTitle' || t == 'subTitle';
 
   Alignment _alignmentForVert(VerticalAlignment v) {
     switch (v) {
@@ -646,6 +1180,643 @@ class SlideRenderer extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum _BorderMode { all, top, bottom, left, right }
+
+enum _AltCommand {
+  arduino,
+  pyodideWorkspace,
+  pyodideCode,
+  pyodideRun,
+  pyodideAnswer,
+}
+
+sealed class _RenderableEntry {
+  final double zOrder;
+
+  const _RenderableEntry(this.zOrder);
+}
+
+class _ElementRenderable extends _RenderableEntry {
+  final SlideElement element;
+
+  const _ElementRenderable(super.zOrder, this.element);
+}
+
+class _OverlayRenderable extends _RenderableEntry {
+  final _CommandOverlaySpec spec;
+
+  const _OverlayRenderable(super.zOrder, this.spec);
+}
+
+class _CommandOverlaySpec {
+  final _AltCommand command;
+  final int shapeId;
+  final double zOrder;
+  final _OverlayBounds bounds;
+  final String content;
+  final String semanticsLabel;
+  final Set<String> hiddenElementKeys;
+  final _PyodideLayoutSpec? pyodideLayout;
+
+  const _CommandOverlaySpec({
+    required this.command,
+    required this.shapeId,
+    required this.zOrder,
+    required this.bounds,
+    this.content = '',
+    required this.semanticsLabel,
+    required this.hiddenElementKeys,
+    this.pyodideLayout,
+  });
+}
+
+class _PyodideLayoutSpec {
+  final _OverlayBounds groupBounds;
+  final _OverlayBounds codeBounds;
+  final _OverlayBounds? runBounds;
+  final _OverlayBounds? answerBounds;
+  final String initialCode;
+  final String initialOutput;
+  final String runLabel;
+
+  const _PyodideLayoutSpec({
+    required this.groupBounds,
+    required this.codeBounds,
+    required this.runBounds,
+    required this.answerBounds,
+    required this.initialCode,
+    required this.initialOutput,
+    required this.runLabel,
+  });
+}
+
+class _OverlayBounds {
+  final double xEmu;
+  final double yEmu;
+  final double cxEmu;
+  final double cyEmu;
+
+  const _OverlayBounds({
+    required this.xEmu,
+    required this.yEmu,
+    required this.cxEmu,
+    required this.cyEmu,
+  });
+}
+
+class _PyodideCommandOverlay extends StatefulWidget {
+  final _PyodideLayoutSpec layout;
+
+  const _PyodideCommandOverlay({required this.layout});
+
+  @override
+  State<_PyodideCommandOverlay> createState() => _PyodideCommandOverlayState();
+}
+
+class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
+  late final _PythonHighlightEditingController _codeController;
+  late final ScrollController _codeScrollController;
+  late final ScrollController _outputScrollController;
+  late String _output;
+  bool _loadingRuntime = true;
+  bool _runtimeReady = false;
+  bool _running = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _codeController = _PythonHighlightEditingController(
+      widget.layout.initialCode,
+    );
+    _codeScrollController = ScrollController();
+    _outputScrollController = ScrollController();
+    _output = widget.layout.initialOutput;
+    _prepareRuntime();
+  }
+
+  Future<void> _prepareRuntime() async {
+    final ready = await browser.ensurePyodideReady();
+    if (!mounted) return;
+    setState(() {
+      _runtimeReady = ready;
+      _loadingRuntime = false;
+      if (!ready && _output.trim().isEmpty) {
+        _output = 'Pyodide indisponivel neste ambiente.';
+      }
+    });
+  }
+
+  Future<void> _runCode() async {
+    if (_running) return;
+    setState(() => _running = true);
+    final result = await browser.runPythonCode(_codeController.text);
+    if (!mounted) return;
+    setState(() {
+      _running = false;
+      _output = result;
+    });
+  }
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    _codeScrollController.dispose();
+    _outputScrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final layout = widget.layout;
+    final group = layout.groupBounds;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        final codeRect = _relativeRect(layout.codeBounds, group, size);
+        final answerRect = layout.answerBounds == null
+            ? null
+            : _relativeRect(layout.answerBounds!, group, size);
+
+        return Stack(
+          clipBehavior: Clip.hardEdge,
+          children: [
+            Positioned.fromRect(rect: codeRect, child: _buildCodeEditor()),
+            if (answerRect != null)
+              Positioned.fromRect(rect: answerRect, child: _buildOutputPanel()),
+          ],
+        );
+      },
+    );
+  }
+
+  Rect _relativeRect(_OverlayBounds target, _OverlayBounds root, Size size) {
+    final rootW = root.cxEmu <= 0 ? 1.0 : root.cxEmu;
+    final rootH = root.cyEmu <= 0 ? 1.0 : root.cyEmu;
+
+    final left = ((target.xEmu - root.xEmu) / rootW * size.width).clamp(
+      0.0,
+      size.width,
+    );
+    final top = ((target.yEmu - root.yEmu) / rootH * size.height).clamp(
+      0.0,
+      size.height,
+    );
+    final width = (target.cxEmu / rootW * size.width).clamp(0.0, size.width);
+    final height = (target.cyEmu / rootH * size.height).clamp(0.0, size.height);
+    return Rect.fromLTWH(left, top, width, height);
+  }
+
+  Widget _buildCodeEditor() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF102834), Color(0xFF1B2C33)],
+          ),
+          border: Border.all(color: const Color(0xFF0F4C66), width: 1.2),
+        ),
+        child: Column(
+          children: [
+            Container(
+              height: 52,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: Color(0xFF214A5D), width: 1),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.code, color: Color(0xFF00C8FF), size: 18),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'CODIGO PYTHON',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.1,
+                        color: Color(0xFF00C8FF),
+                      ),
+                    ),
+                  ),
+                  _headerIconButton(
+                    icon: Icons.content_copy,
+                    tooltip: 'Copiar codigo',
+                    onTap: _copyCode,
+                  ),
+                  const SizedBox(width: 4),
+                  _headerIconButton(
+                    icon: Icons.fullscreen,
+                    tooltip: 'Tela cheia',
+                    onTap: _enterFullscreen,
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF15181E),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Scrollbar(
+                    thumbVisibility: true,
+                    controller: _codeScrollController,
+                    child: TextField(
+                      controller: _codeController,
+                      scrollController: _codeScrollController,
+                      readOnly: false,
+                      enableInteractiveSelection: true,
+                      keyboardType: TextInputType.multiline,
+                      textInputAction: TextInputAction.newline,
+                      expands: true,
+                      maxLines: null,
+                      minLines: null,
+                      cursorColor: const Color(0xFF00E5FF),
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontFamily: 'Consolas',
+                        fontFamilyFallback: ['Courier New', 'monospace'],
+                        height: 1.35,
+                        color: Color(0xFFD4D4D4),
+                      ),
+                      decoration: const InputDecoration.collapsed(hintText: ''),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              child: _buildRunButton(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _headerIconButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: SizedBox(
+          width: 30,
+          height: 30,
+          child: Icon(icon, color: const Color(0xFF8EA4AD), size: 18),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyCode() async {
+    await Clipboard.setData(ClipboardData(text: _codeController.text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Codigo copiado.')));
+  }
+
+  void _enterFullscreen() {
+    browser.requestFullscreen();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Modo tela cheia ativado.')));
+  }
+
+  Widget _buildRunButton() {
+    final enabled = !(_loadingRuntime || !_runtimeReady || _running);
+    return SizedBox(
+      height: 56,
+      width: double.infinity,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Material(
+          color: enabled ? const Color(0xFF1F5533) : const Color(0xFF32453A),
+          child: InkWell(
+            onTap: enabled ? _runCode : null,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.play_arrow,
+                  color: enabled
+                      ? const Color(0xFF25E26C)
+                      : const Color(0xFF89A893),
+                  size: 24,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  _running ? 'Executando...' : widget.layout.runLabel,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    color: enabled
+                        ? const Color(0xFF25E26C)
+                        : const Color(0xFF89A893),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOutputPanel() {
+    final title = _loadingRuntime
+        ? 'Inicializando Pyodide...'
+        : (_runtimeReady ? 'Saida' : 'Saida (indisponivel)');
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        color: Colors.black,
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF62EFA0),
+                ),
+              ),
+            ),
+            Expanded(
+              child: Scrollbar(
+                thumbVisibility: true,
+                controller: _outputScrollController,
+                child: SingleChildScrollView(
+                  controller: _outputScrollController,
+                  child: SelectableText(
+                    _output,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontFamily: 'Consolas',
+                      fontFamilyFallback: ['Courier New', 'monospace'],
+                      height: 1.35,
+                      color: Color(0xFFD4D4D4),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PythonHighlightEditingController extends TextEditingController {
+  _PythonHighlightEditingController(String text) : super(text: text);
+
+  static const TextStyle _baseStyle = TextStyle(
+    color: Color(0xFFD4D4D4),
+    fontSize: 20,
+    fontFamily: 'Consolas',
+    fontFamilyFallback: ['Courier New', 'monospace'],
+    height: 1.35,
+  );
+
+  static final RegExp _tokenPattern = RegExp(
+    r'''(#[^\n]*|"""[\s\S]*?"""|'{3}[\s\S]*?'{3}|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|\r\n|\r|\n|.)''',
+    multiLine: true,
+  );
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    final spans = <InlineSpan>[];
+    for (final match in _tokenPattern.allMatches(text)) {
+      final token = match.group(0)!;
+      spans.add(TextSpan(text: token, style: _tokenStyle(token)));
+    }
+
+    return TextSpan(style: style ?? _baseStyle, children: spans);
+  }
+
+  TextStyle _tokenStyle(String token) {
+    if (token.startsWith('#')) {
+      return _baseStyle.copyWith(
+        color: const Color(0xFF6A9955),
+        fontStyle: FontStyle.italic,
+      );
+    }
+
+    if (_isStringToken(token)) {
+      return _baseStyle.copyWith(color: const Color(0xFFCE9178));
+    }
+
+    if (_pythonKeywords.contains(token)) {
+      return _baseStyle.copyWith(
+        color: const Color(0xFF569CD6),
+        fontWeight: FontWeight.w600,
+      );
+    }
+
+    if (_pythonBuiltins.contains(token)) {
+      return _baseStyle.copyWith(
+        color: const Color(0xFF4EC9B0),
+        fontWeight: FontWeight.w600,
+      );
+    }
+
+    if (_pythonConstants.contains(token)) {
+      return _baseStyle.copyWith(
+        color: const Color(0xFFDCDCAA),
+        fontWeight: FontWeight.w600,
+      );
+    }
+
+    if (RegExp(r'^\d').hasMatch(token)) {
+      return _baseStyle.copyWith(color: const Color(0xFFB5CEA8));
+    }
+
+    return _baseStyle;
+  }
+
+  bool _isStringToken(String token) {
+    return token.startsWith('"') || token.startsWith("'");
+  }
+}
+
+const Set<String> _arduinoKeywords = {
+  'if',
+  'else',
+  'for',
+  'while',
+  'do',
+  'switch',
+  'case',
+  'break',
+  'continue',
+  'return',
+  'goto',
+  'try',
+  'catch',
+  'throw',
+  'class',
+  'struct',
+  'enum',
+  'namespace',
+  'using',
+  'typedef',
+  'template',
+  'public',
+  'private',
+  'protected',
+  'virtual',
+  'static',
+  'const',
+  'constexpr',
+  'volatile',
+  'signed',
+  'unsigned',
+  'sizeof',
+  'new',
+  'delete',
+  'this',
+  'operator',
+};
+
+const Set<String> _pythonKeywords = {
+  'False',
+  'None',
+  'True',
+  'and',
+  'as',
+  'assert',
+  'async',
+  'await',
+  'break',
+  'class',
+  'continue',
+  'def',
+  'del',
+  'elif',
+  'else',
+  'except',
+  'finally',
+  'for',
+  'from',
+  'global',
+  'if',
+  'import',
+  'in',
+  'is',
+  'lambda',
+  'nonlocal',
+  'not',
+  'or',
+  'pass',
+  'raise',
+  'return',
+  'try',
+  'while',
+  'with',
+  'yield',
+};
+
+const Set<String> _pythonBuiltins = {
+  'abs',
+  'all',
+  'any',
+  'bool',
+  'dict',
+  'enumerate',
+  'filter',
+  'float',
+  'int',
+  'len',
+  'list',
+  'map',
+  'max',
+  'min',
+  'print',
+  'range',
+  'set',
+  'sorted',
+  'str',
+  'sum',
+  'tuple',
+  'zip',
+};
+
+const Set<String> _pythonConstants = {
+  '__name__',
+  '__main__',
+  'NotImplemented',
+  'Ellipsis',
+};
+
+const Set<String> _arduinoTypes = {
+  'void',
+  'bool',
+  'boolean',
+  'byte',
+  'char',
+  'word',
+  'short',
+  'int',
+  'long',
+  'float',
+  'double',
+  'size_t',
+  'String',
+  'HardwareSerial',
+};
+
+const Set<String> _arduinoConstants = {
+  'true',
+  'false',
+  'HIGH',
+  'LOW',
+  'INPUT',
+  'OUTPUT',
+  'INPUT_PULLUP',
+  'LED_BUILTIN',
+  'HEX',
+  'DEC',
+  'OCT',
+  'BIN',
+  'FALLING',
+  'RISING',
+  'CHANGE',
+  'LSBFIRST',
+  'MSBFIRST',
+  'PI',
+  'NULL',
+  'nullptr',
+  'Serial',
+  'Serial1',
+  'Serial2',
+  'Serial3',
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Painter de formas geométricas

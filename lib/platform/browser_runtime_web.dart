@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_web_libraries_in_flutter
+
 import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
@@ -99,4 +101,31 @@ void exitFullscreen() {
   try {
     web.document.exitFullscreen();
   } catch (_) {}
+}
+
+@JS('__copilotEnsurePyodide')
+external JSPromise<JSAny?> _ensurePyodideJs();
+
+@JS('__copilotRunPython')
+external JSPromise<JSAny?> _runPythonJs(JSString code);
+
+Future<bool> ensurePyodideReady() async {
+  try {
+    final raw = (await _ensurePyodideJs().toDart).dartify();
+    if (raw is bool) return raw;
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<String> runPythonCode(String code) async {
+  try {
+    final raw = (await _runPythonJs(code.toJS).toDart).dartify();
+    if (raw == null) return '';
+    if (raw is String) return raw;
+    return raw.toString();
+  } catch (e) {
+    return 'Erro ao executar Python: $e';
+  }
 }

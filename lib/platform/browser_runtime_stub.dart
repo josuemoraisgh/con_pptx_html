@@ -25,3 +25,8 @@ AudienceWindowHandle? openAudienceWindow() => null;
 void requestFullscreen() {}
 
 void exitFullscreen() {}
+
+Future<bool> ensurePyodideReady() async => false;
+
+Future<String> runPythonCode(String code) async =>
+    'Pyodide disponivel apenas no build web.';

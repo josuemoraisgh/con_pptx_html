@@ -120,6 +120,7 @@ sealed class SlideElement {
 
   /// ID do shape no OOXML (cNvPr/@id). Usado para mapeamento de animações.
   final int shapeId;
+  final String? commandText;
 
   const SlideElement({
     required this.xEmu,
@@ -129,6 +130,7 @@ sealed class SlideElement {
     required this.zOrder,
     this.rotationDeg,
     this.shapeId = 0,
+    this.commandText,
   });
 }
 
@@ -158,6 +160,7 @@ class ShapeElement extends SlideElement {
     required super.zOrder,
     super.rotationDeg,
     super.shapeId,
+    super.commandText,
     this.presetGeometry,
     this.fill,
     this.outline,
@@ -183,6 +186,7 @@ class ImageElement extends SlideElement {
     required super.zOrder,
     super.rotationDeg,
     super.shapeId,
+    super.commandText,
     this.imageBytes,
     this.mimeType,
     this.altText,
@@ -201,6 +205,7 @@ class TableElement extends SlideElement {
     required super.cyEmu,
     required super.zOrder,
     super.shapeId,
+    super.commandText,
     required this.rows,
     this.colWidthsEmu = const [],
   });

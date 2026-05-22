@@ -145,6 +145,7 @@ class _PresentationViewerState extends State<PresentationViewer> {
 
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
+    if (_currentSlideHasInteractiveCommand) return;
     if (event.scrollDelta.dy.abs() < 8) return;
 
     final now = DateTime.now();
@@ -172,6 +173,47 @@ class _PresentationViewerState extends State<PresentationViewer> {
   }
 
   SlideData get _currentSlide => widget.presentation.slides[_currentIndex];
+
+  bool get _currentSlideHasInteractiveCommand =>
+      _slideHasInteractiveCommand(_currentSlide);
+
+  bool _slideHasInteractiveCommand(SlideData slide) {
+    final commandPattern = RegExp(r'\{([^{}]+)\}');
+    const interactive = {
+      'arduino',
+      'pyodide_code',
+      'pyodide_run',
+      'pyodide_awnser',
+      'pyodide_answer',
+    };
+
+    bool hasInteractiveCommand(String? source) {
+      if (source == null || source.isEmpty) return false;
+      for (final match in commandPattern.allMatches(source)) {
+        if (interactive.contains(match.group(1)?.trim().toLowerCase())) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    for (final element in slide.elements) {
+      if (hasInteractiveCommand(element.commandText)) return true;
+      switch (element) {
+        case ShapeElement() when hasInteractiveCommand(element.altText):
+          return true;
+        case ImageElement() when hasInteractiveCommand(element.altText):
+          return true;
+        case TableElement():
+          break;
+        case ShapeElement():
+          break;
+        case ImageElement():
+          break;
+      }
+    }
+    return false;
+  }
 
   /// Número total de cliques necessários para ver todos os elementos do slide.
   int get _totalSteps => _currentSlide.animSteps.length;
@@ -604,31 +646,34 @@ class _PresentationViewerState extends State<PresentationViewer> {
           },
         ),
 
-        // Toque/clique na metade direita avança, esquerda recua
-        Positioned.fill(
-          child: Row(
-            children: [
-              Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTap: () {
-                    _requestKeyboardFocus();
-                    _retreat();
-                  },
+        // Toque/clique na metade direita avança, esquerda recua.
+        // Em slides com comando interativo (ex.: {arduino}), essa camada
+        // é desativada para não bloquear scroll e interação no conteúdo.
+        if (!_currentSlideHasInteractiveCommand)
+          Positioned.fill(
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: () {
+                      _requestKeyboardFocus();
+                      _retreat();
+                    },
+                  ),
                 ),
-              ),
-              Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTap: () {
-                    _requestKeyboardFocus();
-                    _advance();
-                  },
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: () {
+                      _requestKeyboardFocus();
+                      _advance();
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
 
         // Botão anterior
         if (_currentIndex > 0 || _animStep > 0)
