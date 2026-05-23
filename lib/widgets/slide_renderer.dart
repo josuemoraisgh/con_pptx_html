@@ -769,6 +769,9 @@ class SlideRenderer extends StatelessWidget {
       VerticalAlignment.bottom => Alignment.bottomLeft,
     };
 
+    // PowerPoint default: text overflows its bounding box without clipping.
+    // Using Align for vertical positioning; overflow is rendered without clip
+    // to match PowerPoint's default behaviour (no autofit = text can overflow).
     return Align(
       alignment: alignment,
       child: ConstrainedBox(
@@ -894,14 +897,21 @@ class SlideRenderer extends StatelessWidget {
     );
     final fontSizePt = (rp.fontSizePt ?? 18.0) * fontScale;
     final family = _resolveFont(rp.fontFamily, pres);
-    final lineHeight = 1.0 * lineSpacingMultiplier * (1.0 - lineSpaceReduction);
+    // PowerPoint "100% line spacing" (spcPct=100) = font's natural line height.
+    // Flutter height:null = natural. height:1.0 would clip ascenders/descenders.
+    // Only set an explicit height when spacing differs from natural (100%).
+    final double? lineHeight =
+        (lineSpacingMultiplier == 1.0 && lineSpaceReduction == 0.0)
+        ? null
+        : lineSpacingMultiplier * (1.0 - lineSpaceReduction);
 
     final baseStyle = TextStyle(
       fontSize: fontSize,
       fontWeight: rp.bold ? FontWeight.bold : FontWeight.normal,
       fontStyle: rp.italic ? FontStyle.italic : FontStyle.normal,
       decoration: _textDecoration(rp),
-      decorationColor: rp.color,
+      decorationColor: rp.underlineColor ?? rp.color,
+      decorationStyle: _textDecorationStyle(rp),
       color: rp.color ?? Colors.black,
       letterSpacing: (rp.letterSpacingPt ?? 0) * _ptToPx,
       height: lineHeight,
@@ -914,20 +924,19 @@ class SlideRenderer extends StatelessWidget {
   }
 
   InlineSpan _buildRunSpan(String text, RunProperties props, TextStyle style) {
+    final renderedText = _applyCaps(text, props.capsType);
     final baselineShiftPct = props.baselinePct ?? 0;
-    if (baselineShiftPct == 0 || text.trim().isEmpty) {
-      return TextSpan(text: text, style: style);
+    if (baselineShiftPct == 0 || renderedText.trim().isEmpty) {
+      return TextSpan(text: renderedText, style: style);
     }
 
-    final fontSize = style.fontSize ?? 12.0;
-    final shiftY = -(fontSize * baselineShiftPct / 100.0);
-    return WidgetSpan(
-      alignment: PlaceholderAlignment.baseline,
-      baseline: TextBaseline.alphabetic,
-      child: Transform.translate(
-        offset: Offset(0, shiftY),
-        child: Text(text, style: style),
-      ),
+    // Evita inflar altura de linha em expressões matemáticas: aplicamos escala
+    // tipográfica para superscript/subscript sem WidgetSpan.
+    final baseSize = style.fontSize ?? 12.0;
+    final scale = (1.0 - (baselineShiftPct.abs() / 200.0)).clamp(0.6, 1.0);
+    return TextSpan(
+      text: renderedText,
+      style: style.copyWith(fontSize: baseSize * scale),
     );
   }
 
@@ -935,11 +944,34 @@ class SlideRenderer extends StatelessWidget {
     RunProperties rp, {
     required double effectiveFontPt,
   }) {
+    final features = <ui.FontFeature>[];
+
     final kern = rp.kerningPt;
-    if (kern == null) return null;
-    if (kern <= 0) return const [ui.FontFeature.disable('kern')];
-    if (effectiveFontPt >= kern) return const [ui.FontFeature.enable('kern')];
-    return const [ui.FontFeature.disable('kern')];
+    if (kern != null) {
+      if (kern <= 0) {
+        features.add(const ui.FontFeature.disable('kern'));
+      } else if (effectiveFontPt >= kern) {
+        features.add(const ui.FontFeature.enable('kern'));
+      } else {
+        features.add(const ui.FontFeature.disable('kern'));
+      }
+    }
+
+    if ((rp.capsType ?? '').toLowerCase() == 'small') {
+      features.add(const ui.FontFeature.enable('smcp'));
+      features.add(const ui.FontFeature.enable('c2sc'));
+    }
+
+    return features.isEmpty ? null : features;
+  }
+
+  String _applyCaps(String text, String? capsType) {
+    switch ((capsType ?? '').toLowerCase()) {
+      case 'all':
+        return text.toUpperCase();
+      default:
+        return text;
+    }
   }
 
   double _paragraphBaseFontPt(TextParagraph para, double fontScale) {
@@ -1014,6 +1046,34 @@ class SlideRenderer extends StatelessWidget {
     if (rp.underline) return TextDecoration.underline;
     if (rp.strikethrough) return TextDecoration.lineThrough;
     return TextDecoration.none;
+  }
+
+  TextDecorationStyle _textDecorationStyle(RunProperties rp) {
+    if (!rp.underline && rp.doubleStrikethrough) {
+      return TextDecorationStyle.double;
+    }
+
+    final style = (rp.underlineStyle ?? '').toLowerCase();
+    switch (style) {
+      case 'dash':
+      case 'dashheavy':
+      case 'dashlong':
+      case 'dashlongheavy':
+        return TextDecorationStyle.dashed;
+      case 'dotdash':
+      case 'dotdotdash':
+      case 'dotted':
+      case 'dotheavy':
+        return TextDecorationStyle.dotted;
+      case 'wavy':
+      case 'wavyheavy':
+      case 'wavydbl':
+        return TextDecorationStyle.wavy;
+      case 'dbl':
+        return TextDecorationStyle.double;
+      default:
+        return TextDecorationStyle.solid;
+    }
   }
 
   // ── Imagem ────────────────────────────────────────────────────────────────

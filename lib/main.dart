@@ -6,6 +6,7 @@ import 'models/pptx_models.dart';
 import 'parsers/pptx_parser.dart';
 import 'platform/browser_runtime.dart' as browser;
 import 'screens/audience_screen.dart';
+import 'screens/raw_slide_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -67,11 +68,36 @@ class _BootstrapAppState extends State<_BootstrapApp> {
 
     final presentation = _presentation;
     final isAudience = browser.isAudienceView;
+    final isRaw = browser.isRawView;
     final hasSlides = presentation?.slides.isNotEmpty ?? false;
+
+    if (isRaw && presentation != null && hasSlides) {
+      return _RawSlideApp(
+        presentation: presentation,
+        slideIndex: browser.rawSlideIndex,
+      );
+    }
 
     return isAudience && presentation != null && hasSlides
         ? _AudienceApp(presentation: presentation)
         : ConPptxHtmlApp(presentation: presentation, parseError: _parseError);
+  }
+}
+
+class _RawSlideApp extends StatelessWidget {
+  final PresentationData presentation;
+  final int slideIndex;
+
+  const _RawSlideApp({required this.presentation, required this.slideIndex});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Raw Slide',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(),
+      home: RawSlideScreen(presentation: presentation, slideIndex: slideIndex),
+    );
   }
 }
 

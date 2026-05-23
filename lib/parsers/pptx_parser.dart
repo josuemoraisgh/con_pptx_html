@@ -1515,6 +1515,12 @@ class PptxParser {
         : (int.tryParse(kernAttr) ?? 0) / 100.0;
     final kerningPt = parsedKern ?? base.kerningPt;
 
+    var capsType = base.capsType;
+    final capVal = rPr.attr('cap');
+    if (capVal != null) {
+      capsType = capVal;
+    }
+
     var bold = base.bold;
     final bVal = rPr.attr('b');
     if (bVal != null) bold = bVal == '1' || bVal == 'true';
@@ -1524,12 +1530,37 @@ class PptxParser {
     if (iVal != null) italic = iVal == '1' || iVal == 'true';
 
     var underline = base.underline;
+    var underlineStyle = base.underlineStyle;
+    var underlineColor = base.underlineColor;
     final uVal = rPr.attr('u');
-    if (uVal != null) underline = uVal != 'none';
+    if (uVal != null) {
+      underline = uVal != 'none';
+      underlineStyle = uVal;
+    }
+
+    final uFill = rPr.child('uFill');
+    if (uFill != null) {
+      final solidFill = uFill.child('solidFill');
+      if (solidFill != null) {
+        underlineColor = cr.resolveColorElement(solidFill) ?? underlineColor;
+      }
+    } else {
+      final uLn = rPr.child('uLn');
+      if (uLn != null) {
+        final solidFill = uLn.child('solidFill');
+        if (solidFill != null) {
+          underlineColor = cr.resolveColorElement(solidFill) ?? underlineColor;
+        }
+      }
+    }
 
     var strike = base.strikethrough;
+    var doubleStrike = base.doubleStrikethrough;
     final strikeVal = rPr.attr('strike');
-    if (strikeVal != null) strike = strikeVal != 'noStrike';
+    if (strikeVal != null) {
+      strike = strikeVal != 'noStrike';
+      doubleStrike = strikeVal == 'dblStrike';
+    }
 
     var color = base.color;
     final solidFill = rPr.child('solidFill');
@@ -1548,10 +1579,14 @@ class PptxParser {
       letterSpacingPt: letterSpacingPt,
       baselinePct: baselinePct,
       kerningPt: kerningPt,
+      capsType: capsType,
       bold: bold,
       italic: italic,
       underline: underline,
+      underlineStyle: underlineStyle,
+      underlineColor: underlineColor,
       strikethrough: strike,
+      doubleStrikethrough: doubleStrike,
       color: color,
       fontFamily: fontFamily,
       isPlaceholder: inherit != null,

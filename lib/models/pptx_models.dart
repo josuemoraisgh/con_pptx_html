@@ -293,10 +293,14 @@ class RunProperties {
   final double? letterSpacingPt;
   final double? baselinePct;
   final double? kerningPt;
+  final String? capsType; // OOXML: none, small, all
   final bool bold;
   final bool italic;
   final bool underline;
+  final String? underlineStyle; // OOXML token de rPr@u
+  final Color? underlineColor;
   final bool strikethrough;
+  final bool doubleStrikethrough;
   final Color? color;
   final String? fontFamily;
   final bool isPlaceholder; // run sem formatação herdará do layout/master
@@ -306,10 +310,14 @@ class RunProperties {
     this.letterSpacingPt,
     this.baselinePct,
     this.kerningPt,
+    this.capsType,
     this.bold = false,
     this.italic = false,
     this.underline = false,
+    this.underlineStyle,
+    this.underlineColor,
     this.strikethrough = false,
+    this.doubleStrikethrough = false,
     this.color,
     this.fontFamily,
     this.isPlaceholder = false,

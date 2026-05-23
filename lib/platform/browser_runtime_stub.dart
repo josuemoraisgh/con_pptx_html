@@ -17,6 +17,8 @@ class BrowserMessenger {
 }
 
 bool get isAudienceView => false;
+bool get isRawView => false;
+int get rawSlideIndex => 0;
 
 bool get hasMultipleScreens => false;
 

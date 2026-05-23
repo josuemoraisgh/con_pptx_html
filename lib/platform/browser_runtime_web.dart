@@ -55,6 +55,15 @@ bool get isAudienceView =>
     Uri.tryParse(web.window.location.href)?.queryParameters['view'] ==
     'audience';
 
+bool get isRawView =>
+    Uri.tryParse(web.window.location.href)?.queryParameters['view'] == 'raw';
+
+int get rawSlideIndex =>
+    int.tryParse(
+      Uri.tryParse(web.window.location.href)?.queryParameters['n'] ?? '0',
+    ) ??
+    0;
+
 bool get hasMultipleScreens {
   try {
     final screen = globalContext['screen'];
