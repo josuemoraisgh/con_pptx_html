@@ -618,8 +618,14 @@ class PptxParser {
     final embedAttr = blip.attributes
         .where((a) => a.localName == 'embed')
         .firstOrNull;
-    final imgPath = embedAttr != null ? rels[embedAttr.value] : null;
+    final svgBlip = blip.deep('svgBlip');
+    final svgEmbedAttr = svgBlip?.attributes
+        .where((a) => a.localName == 'embed')
+        .firstOrNull;
+    final relId = embedAttr?.value ?? svgEmbedAttr?.value;
+    final imgPath = relId != null ? rels[relId] : null;
     final bytes = imgPath != null ? _files[imgPath] : null;
+    final mimeType = _detectImageMimeType(imgPath, bytes);
 
     return ImageElement(
       xEmu: xfrm.x,
@@ -631,8 +637,55 @@ class PptxParser {
       shapeId: shapeId,
       commandText: null,
       imageBytes: bytes,
+      mimeType: mimeType,
       altText: altText,
     );
+  }
+
+  String? _detectImageMimeType(String? path, Uint8List? bytes) {
+    if (path != null) {
+      final lower = path.toLowerCase();
+      if (lower.endsWith('.svg')) return 'image/svg+xml';
+      if (lower.endsWith('.png')) return 'image/png';
+      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+        return 'image/jpeg';
+      }
+      if (lower.endsWith('.gif')) return 'image/gif';
+      if (lower.endsWith('.webp')) return 'image/webp';
+      if (lower.endsWith('.bmp')) return 'image/bmp';
+    }
+    if (bytes == null || bytes.length < 8) return null;
+
+    if (bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      return 'image/png';
+    }
+    if (bytes[0] == 0xFF && bytes[1] == 0xD8) return 'image/jpeg';
+    if (bytes[0] == 0x47 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x38) {
+      return 'image/gif';
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return 'image/webp';
+    }
+
+    final headLen = bytes.length < 64 ? bytes.length : 64;
+    final head = String.fromCharCodes(bytes.sublist(0, headLen)).toLowerCase();
+    if (head.contains('<svg')) return 'image/svg+xml';
+
+    return null;
   }
 
   // ── Graphic Frame (tabela, gráfico) ───────────────────────────────────────
@@ -720,7 +773,9 @@ class PptxParser {
   ) {
     // ID do grupo (cNvPr/@id) — os filhos herdam este ID para que animações
     // que referenciam o grupo (spTgt spid="N") funcionem corretamente.
-    final groupAltText = _extractAltText(grp.child('nvGrpSpPr')?.child('cNvPr'));
+    final groupAltText = _extractAltText(
+      grp.child('nvGrpSpPr')?.child('cNvPr'),
+    );
     final groupId =
         int.tryParse(
           grp.child('nvGrpSpPr')?.child('cNvPr')?.attr('id') ?? '0',

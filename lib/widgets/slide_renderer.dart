@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../models/pptx_models.dart';
@@ -538,7 +539,13 @@ class SlideRenderer extends StatelessWidget {
     if (el.paragraphs.isNotEmpty) {
       final availW = (width - insetL - insetR).clamp(0.0, double.infinity);
       final availH = (height - insetT - insetB).clamp(0.0, double.infinity);
-      Widget body = _buildTextBody(el.paragraphs, el.bodyProps, pres, availW);
+      Widget body = _buildTextBody(
+        el.paragraphs,
+        el.bodyProps,
+        pres,
+        availW,
+        defaultTextColor: _resolveDefaultTextColorForShape(el),
+      );
       // Encolhe automaticamente o bloco de texto para caber na área útil
       // da caixa e evitar overflow visual em layouts densos.
       body = SizedBox(
@@ -583,6 +590,47 @@ class SlideRenderer extends StatelessWidget {
     }
     return shapeBody;
   }
+
+  Color? _resolveDefaultTextColorForShape(ShapeElement el) {
+    final placeholder = el.placeholderType?.toLowerCase();
+    final slideDark = _isDarkSlideBackground();
+
+    if (placeholder == 'title' ||
+        placeholder == 'ctrtitle' ||
+        placeholder == 'subtitle') {
+      return slideDark ? const Color(0xFFF0F4F8) : const Color(0xFF111827);
+    }
+
+    if (placeholder == 'body') {
+      return slideDark ? const Color(0xFFCBD5E0) : const Color(0xFF1F2937);
+    }
+
+    final fill = el.fill;
+    if (fill is SolidFill) {
+      return _isDarkColor(fill.color)
+          ? const Color(0xFFF0F4F8)
+          : const Color(0xFF111827);
+    }
+
+    return slideDark ? const Color(0xFFE2E8F0) : null;
+  }
+
+  bool _isDarkSlideBackground() {
+    final bg = slide.background;
+    final fill = bg?.fill;
+    if (fill is SolidFill) {
+      return _isDarkColor(fill.color);
+    }
+    if (fill is GradientFill && fill.stops.isNotEmpty) {
+      final avgLuminance =
+          fill.stops.map((s) => s.color.computeLuminance()).reduce((a, b) => a + b) /
+          fill.stops.length;
+      return avgLuminance < 0.45;
+    }
+    return false;
+  }
+
+  bool _isDarkColor(Color color) => color.computeLuminance() < 0.45;
 
   Widget _buildCommandOverlay(_CommandOverlaySpec spec, PresentationData pres) {
     final left = pres.emuToPx(spec.bounds.xEmu);
@@ -736,6 +784,7 @@ class SlideRenderer extends StatelessWidget {
     TextBodyProperties bodyProps,
     PresentationData pres,
     double availableWidth,
+    {Color? defaultTextColor}
   ) {
     final fontScale = bodyProps.fontScale;
     final lineSpaceReduction = bodyProps.lineSpaceReduction;
@@ -763,6 +812,7 @@ class SlideRenderer extends StatelessWidget {
           lineSpaceReduction,
           bodyProps.wordWrap,
           autoNumber,
+          defaultTextColor,
         ),
       );
     }
@@ -795,6 +845,7 @@ class SlideRenderer extends StatelessWidget {
     double lineSpaceReduction = 0.0,
     bool wordWrap = true,
     String? autoNumber,
+    Color? defaultTextColor,
   ]) {
     final props = para.props;
     final lineSpacingMultiplier = ((props.lineSpacingPct ?? 100.0) / 100.0)
@@ -817,9 +868,10 @@ class SlideRenderer extends StatelessWidget {
           style: _runStyle(
             run.props,
             pres,
-            fontScale,
-            lineSpaceReduction,
-            lineSpacingMultiplier,
+            fontScale: fontScale,
+            lineSpaceReduction: lineSpaceReduction,
+            lineSpacingMultiplier: lineSpacingMultiplier,
+            defaultColor: defaultTextColor,
           ),
         ),
       );
@@ -846,6 +898,7 @@ class SlideRenderer extends StatelessWidget {
           fontScale,
           lineSpaceReduction,
           lineSpacingMultiplier,
+          defaultColor: defaultTextColor,
         );
         textWidget = Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -880,11 +933,13 @@ class SlideRenderer extends StatelessWidget {
 
   TextStyle _runStyle(
     RunProperties rp,
-    PresentationData pres, [
+    PresentationData pres,
+    {
     double fontScale = 1.0,
     double lineSpaceReduction = 0.0,
     double lineSpacingMultiplier = 1.0,
-  ]) {
+    Color? defaultColor,
+  }) {
     final fontSize = ((rp.fontSizePt ?? 18.0) * fontScale).clamp(6.0, 200.0);
     final family = _mapToSafeFont(_resolveFont(rp.fontFamily, pres));
     final lineHeight =
@@ -899,7 +954,7 @@ class SlideRenderer extends StatelessWidget {
       fontStyle: rp.italic ? FontStyle.italic : FontStyle.normal,
       decoration: _textDecoration(rp),
       decorationColor: rp.color,
-      color: rp.color ?? Colors.black,
+      color: rp.color ?? defaultColor ?? Colors.black,
       height: lineHeight,
       fontFamilyFallback: _fontFallbackFor(family),
     );
@@ -987,15 +1042,17 @@ class SlideRenderer extends StatelessWidget {
     double fontScale,
     double lineSpaceReduction,
     double lineSpacingMultiplier,
+    {Color? defaultColor}
   ) {
     final firstRun = para.runs.firstOrNull?.props ?? const RunProperties();
     final bulletColor = para.props.bullet?.color;
     final style = _runStyle(
       firstRun,
       pres,
-      fontScale,
-      lineSpaceReduction,
-      lineSpacingMultiplier,
+      fontScale: fontScale,
+      lineSpaceReduction: lineSpaceReduction,
+      lineSpacingMultiplier: lineSpacingMultiplier,
+      defaultColor: defaultColor,
     );
     return bulletColor != null ? style.copyWith(color: bulletColor) : style;
   }
@@ -1024,11 +1081,23 @@ class SlideRenderer extends StatelessWidget {
   // ── Imagem ────────────────────────────────────────────────────────────────
 
   Widget _buildImage(ImageElement el) {
+    final isSvg = (el.mimeType ?? '').toLowerCase().contains('svg');
     final image = el.imageBytes == null
         ? Container(
             color: Colors.grey.shade200,
             child: const Center(
               child: Icon(Icons.broken_image, color: Colors.grey),
+            ),
+          )
+        : isSvg
+        ? SvgPicture.memory(
+            el.imageBytes!,
+            fit: BoxFit.fill,
+            placeholderBuilder: (context) => Container(
+              color: Colors.grey.shade200,
+              child: const Center(
+                child: Icon(Icons.image, color: Colors.grey),
+              ),
             ),
           )
         : Image.memory(
