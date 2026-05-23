@@ -1,8 +1,8 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../models/pptx_models.dart';
 import '../platform/browser_runtime.dart' as browser;
@@ -25,6 +25,8 @@ class SlideRenderer extends StatelessWidget {
     this.visibleIds,
     this.animStep = 0,
   });
+
+  static const double _ptToPx = 96.0 / 72.0;
 
   @override
   Widget build(BuildContext context) {
@@ -540,16 +542,6 @@ class SlideRenderer extends StatelessWidget {
       final availW = (width - insetL - insetR).clamp(0.0, double.infinity);
       final availH = (height - insetT - insetB).clamp(0.0, double.infinity);
       Widget body = _buildTextBody(el.paragraphs, el.bodyProps, pres, availW);
-      if (availW < 100.0 || availH < 40.0) {
-        body = FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.center,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: availW),
-            child: body,
-          ),
-        );
-      }
       body = SizedBox(width: availW, height: availH, child: body);
       textWidget = Padding(
         padding: EdgeInsets.fromLTRB(insetL, insetT, insetR, insetB),
@@ -795,12 +787,19 @@ class SlideRenderer extends StatelessWidget {
     String? autoNumber,
   ]) {
     final props = para.props;
-    final lineSpacingMultiplier = ((props.lineSpacingPct ?? 100.0) / 100.0)
-        .clamp(0.5, 3.0);
+    final baseFontPt = _paragraphBaseFontPt(para, fontScale);
+    final lineSpacingMultiplier = props.lineSpacingPt != null
+        ? (props.lineSpacingPt! / baseFontPt)
+        : ((props.lineSpacingPct ?? 100.0) / 100.0);
 
     if (para.runs.isEmpty) {
-      final h = props.spaceBeforePt != null ? props.spaceBeforePt! * 0.5 : 4.0;
-      return SizedBox(height: h.clamp(2.0, 20.0));
+      final h = _paragraphSpacingPx(
+        pt: props.spaceBeforePt,
+        pct: props.spaceBeforePct,
+        baseFontPt: baseFontPt,
+        lineSpacingMultiplier: lineSpacingMultiplier,
+      );
+      return SizedBox(height: h);
     }
 
     final spans = <InlineSpan>[];
@@ -809,18 +808,14 @@ class SlideRenderer extends StatelessWidget {
         spans.add(const TextSpan(text: '\n'));
         continue;
       }
-      spans.add(
-        TextSpan(
-          text: run.text,
-          style: _runStyle(
-            run.props,
-            pres,
-            fontScale: fontScale,
-            lineSpaceReduction: lineSpaceReduction,
-            lineSpacingMultiplier: lineSpacingMultiplier,
-          ),
-        ),
+      final runStyle = _runStyle(
+        run.props,
+        pres,
+        fontScale: fontScale,
+        lineSpaceReduction: lineSpaceReduction,
+        lineSpacingMultiplier: lineSpacingMultiplier,
       );
+      spans.add(_buildRunSpan(run.text, run.props, runStyle));
     }
 
     Widget textWidget = RichText(
@@ -863,8 +858,18 @@ class SlideRenderer extends StatelessWidget {
       }
     }
 
-    final topPad = (props.spaceBeforePt ?? 0) * 0.5;
-    final botPad = (props.spaceAfterPt ?? 0) * 0.5;
+    final topPad = _paragraphSpacingPx(
+      pt: props.spaceBeforePt,
+      pct: props.spaceBeforePct,
+      baseFontPt: baseFontPt,
+      lineSpacingMultiplier: lineSpacingMultiplier,
+    );
+    final botPad = _paragraphSpacingPx(
+      pt: props.spaceAfterPt,
+      pct: props.spaceAfterPct,
+      baseFontPt: baseFontPt,
+      lineSpacingMultiplier: lineSpacingMultiplier,
+    );
 
     if (topPad > 0 || botPad > 0) {
       textWidget = Padding(
@@ -883,13 +888,13 @@ class SlideRenderer extends StatelessWidget {
     double lineSpaceReduction = 0.0,
     double lineSpacingMultiplier = 1.0,
   }) {
-    final fontSize = ((rp.fontSizePt ?? 18.0) * fontScale).clamp(6.0, 200.0);
-    final family = _mapToSafeFont(_resolveFont(rp.fontFamily, pres));
-    final lineHeight =
-        (1.0 * lineSpacingMultiplier * (1.0 - lineSpaceReduction)).clamp(
-          0.8,
-          3.0,
-        );
+    final fontSize = ((rp.fontSizePt ?? 18.0) * _ptToPx * fontScale).clamp(
+      6.0,
+      200.0,
+    );
+    final fontSizePt = (rp.fontSizePt ?? 18.0) * fontScale;
+    final family = _resolveFont(rp.fontFamily, pres);
+    final lineHeight = 1.0 * lineSpacingMultiplier * (1.0 - lineSpaceReduction);
 
     final baseStyle = TextStyle(
       fontSize: fontSize,
@@ -898,34 +903,66 @@ class SlideRenderer extends StatelessWidget {
       decoration: _textDecoration(rp),
       decorationColor: rp.color,
       color: rp.color ?? Colors.black,
+      letterSpacing: (rp.letterSpacingPt ?? 0) * _ptToPx,
       height: lineHeight,
+      fontFamily: family,
       fontFamilyFallback: _fontFallbackFor(family),
+      fontFeatures: _fontFeaturesFor(rp, effectiveFontPt: fontSizePt),
     );
 
-    try {
-      return GoogleFonts.getFont(family, textStyle: baseStyle);
-    } catch (_) {
-      final f = family.toLowerCase();
-      final preferredFamily =
-          f.contains('consolas') ||
-              f.contains('courier') ||
-              f.contains('arial') ||
-              f.contains('times new roman')
-          ? family
-          : _systemFallbackFamily(family);
-      return baseStyle.copyWith(fontFamily: preferredFamily);
-    }
+    return baseStyle;
   }
 
-  String _systemFallbackFamily(String family) {
-    final f = family.toLowerCase();
-    if (f.contains('mono') || f.contains('courier') || f.contains('consolas')) {
-      return 'Courier New';
+  InlineSpan _buildRunSpan(String text, RunProperties props, TextStyle style) {
+    final baselineShiftPct = props.baselinePct ?? 0;
+    if (baselineShiftPct == 0 || text.trim().isEmpty) {
+      return TextSpan(text: text, style: style);
     }
-    if (f.contains('serif') || f.contains('lora') || f.contains('cambria')) {
-      return 'Times New Roman';
+
+    final fontSize = style.fontSize ?? 12.0;
+    final shiftY = -(fontSize * baselineShiftPct / 100.0);
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.baseline,
+      baseline: TextBaseline.alphabetic,
+      child: Transform.translate(
+        offset: Offset(0, shiftY),
+        child: Text(text, style: style),
+      ),
+    );
+  }
+
+  List<ui.FontFeature>? _fontFeaturesFor(
+    RunProperties rp, {
+    required double effectiveFontPt,
+  }) {
+    final kern = rp.kerningPt;
+    if (kern == null) return null;
+    if (kern <= 0) return const [ui.FontFeature.disable('kern')];
+    if (effectiveFontPt >= kern) return const [ui.FontFeature.enable('kern')];
+    return const [ui.FontFeature.disable('kern')];
+  }
+
+  double _paragraphBaseFontPt(TextParagraph para, double fontScale) {
+    final raw = para.runs.firstWhere(
+      (r) => r.text.trim().isNotEmpty,
+      orElse: () => const TextRun(text: '', props: RunProperties.empty),
+    );
+    final pt = raw.props.fontSizePt ?? 18.0;
+    return (pt * fontScale).clamp(1.0, 400.0);
+  }
+
+  double _paragraphSpacingPx({
+    double? pt,
+    double? pct,
+    required double baseFontPt,
+    required double lineSpacingMultiplier,
+  }) {
+    if (pt != null) return pt * _ptToPx;
+    if (pct != null) {
+      final baseLinePx = baseFontPt * _ptToPx * lineSpacingMultiplier;
+      return baseLinePx * (pct / 100.0);
     }
-    return 'Arial';
+    return 0;
   }
 
   List<String> _fontFallbackFor(String family) {
@@ -936,37 +973,8 @@ class SlideRenderer extends StatelessWidget {
     if (f.contains('serif') || f.contains('lora') || f.contains('cambria')) {
       return const ['Cambria', 'Times New Roman', 'Georgia', 'serif'];
     }
-    return const ['Inter', 'Segoe UI', 'Arial', 'Helvetica', 'sans-serif'];
+    return const ['Segoe UI', 'Arial', 'Helvetica', 'sans-serif'];
   }
-
-  /// Mapeia fontes comuns do PPTX para equivalentes disponíveis no Google
-  /// Fonts. Evita o "flash" causado por tentativas de carregar Calibri/Cambria
-  /// que não existem na CDN — assim o nome resolvido sempre é baixável e o
-  /// pre-load no PresentationViewer garante que tudo já está pronto.
-  static const Map<String, String> _safeFontMap = {
-    'calibri': 'Carlito',
-    'calibri light': 'Carlito',
-    'cambria': 'Caladea',
-    'cambria math': 'Caladea',
-    'arial': 'Arimo',
-    'arial black': 'Arimo',
-    'helvetica': 'Arimo',
-    'times new roman': 'Tinos',
-    'times': 'Tinos',
-    'georgia': 'Tinos',
-    'verdana': 'Arimo',
-    'tahoma': 'Arimo',
-    'segoe ui': 'Arimo',
-    'comic sans ms': 'Comic Neue',
-    'trebuchet ms': 'Arimo',
-  };
-
-  static String mapToSafeFont(String name) {
-    if (name.isEmpty) return 'Carlito';
-    return _safeFontMap[name.toLowerCase()] ?? name;
-  }
-
-  String _mapToSafeFont(String name) => mapToSafeFont(name);
 
   TextStyle _bulletRunStyle(
     TextParagraph para,

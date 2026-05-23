@@ -10,12 +10,14 @@ class PresentationData {
   final double slideWidthEmu;
   final double slideHeightEmu;
   final OOXMLTheme theme;
+  final List<EmbeddedFontFace> embeddedFonts;
 
   const PresentationData({
     required this.slides,
     required this.slideWidthEmu,
     required this.slideHeightEmu,
     required this.theme,
+    this.embeddedFonts = const [],
   });
 
   // Largura de canvas normalizada para 960 px
@@ -27,6 +29,20 @@ class PresentationData {
 
   double emuToPx(double emu) =>
       slideWidthEmu > 0 ? emu * canvasWidth / slideWidthEmu : 0;
+}
+
+class EmbeddedFontFace {
+  final String family;
+  final bool bold;
+  final bool italic;
+  final Uint8List bytes;
+
+  const EmbeddedFontFace({
+    required this.family,
+    required this.bold,
+    required this.italic,
+    required this.bytes,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -249,8 +265,11 @@ class TextRun {
 class ParagraphProperties {
   final TextAlign alignment;
   final double? spaceBeforePt;
+  final double? spaceBeforePct; // percentual: 100 = 100% da linha
   final double? spaceAfterPt;
+  final double? spaceAfterPct; // percentual: 100 = 100% da linha
   final double? lineSpacingPct; // percentual: 100 = normal
+  final double? lineSpacingPt; // espaçamento absoluto em pt
   final double? marLeftEmu;
   final int level; // para listas (0-8)
   final BulletSpec? bullet;
@@ -258,8 +277,11 @@ class ParagraphProperties {
   const ParagraphProperties({
     this.alignment = TextAlign.left,
     this.spaceBeforePt,
+    this.spaceBeforePct,
     this.spaceAfterPt,
+    this.spaceAfterPct,
     this.lineSpacingPct,
+    this.lineSpacingPt,
     this.marLeftEmu,
     this.level = 0,
     this.bullet,
@@ -268,6 +290,9 @@ class ParagraphProperties {
 
 class RunProperties {
   final double? fontSizePt;
+  final double? letterSpacingPt;
+  final double? baselinePct;
+  final double? kerningPt;
   final bool bold;
   final bool italic;
   final bool underline;
@@ -278,6 +303,9 @@ class RunProperties {
 
   const RunProperties({
     this.fontSizePt,
+    this.letterSpacingPt,
+    this.baselinePct,
+    this.kerningPt,
     this.bold = false,
     this.italic = false,
     this.underline = false,

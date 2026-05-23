@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../models/pptx_models.dart';
 import '../platform/browser_runtime.dart' as browser;
@@ -76,68 +75,30 @@ class _PresentationViewerState extends State<PresentationViewer> {
     });
   }
 
-  /// Pré-carrega todas as fontes Google usadas na apresentação para evitar
-  /// layout shift quando as fontes chegam assincronamente. Mapeia nomes de
-  /// fontes do PPTX (Calibri, Cambria, etc.) para fontes equivalentes que
-  /// existem no Google Fonts e baixa todas as variantes usadas (regular,
-  /// bold, italic, boldItalic).
+  /// Mantém o gate inicial para sincronizar a primeira renderização.
+  /// A fonte usada agora segue diretamente o nome vindo do OOXML.
   Future<void> _preloadFonts() async {
-    final pres = widget.presentation;
+    final embeddedFonts = widget.presentation.embeddedFonts;
+    if (embeddedFonts.isNotEmpty) {
+      final loaders = <String, FontLoader>{};
+      for (final face in embeddedFonts) {
+        final loader = loaders.putIfAbsent(
+          face.family,
+          () => FontLoader(face.family),
+        );
+        loader.addFont(
+          Future<ByteData>.value(ByteData.sublistView(face.bytes)),
+        );
+      }
 
-    // Coleta nomes brutos + variantes (bold/italic) realmente usadas.
-    final variants =
-        <String, Set<int>>{}; // family -> bitmask: 1=bold, 2=italic
-
-    void register(String? raw, {bool bold = false, bool italic = false}) {
-      if (raw == null || raw.isEmpty) return;
-      // Resolve +mj-lt / +mn-lt
-      String resolved = raw;
-      if (raw.startsWith('+mj')) resolved = pres.theme.majorFontLatin;
-      if (raw.startsWith('+mn')) resolved = pres.theme.minorFontLatin;
-      final mapped = SlideRenderer.mapToSafeFont(resolved);
-      final mask = (bold ? 1 : 0) | (italic ? 2 : 0);
-      variants.putIfAbsent(mapped, () => <int>{}).add(mask);
-    }
-
-    register(pres.theme.majorFontLatin);
-    register(pres.theme.majorFontLatin, bold: true);
-    register(pres.theme.minorFontLatin);
-    register(pres.theme.minorFontLatin, bold: true);
-
-    for (final slide in pres.slides) {
-      for (final el in slide.elements) {
-        if (el is ShapeElement) {
-          for (final para in el.paragraphs) {
-            for (final run in para.runs) {
-              register(
-                run.props.fontFamily,
-                bold: run.props.bold,
-                italic: run.props.italic,
-              );
-            }
-          }
+      for (final loader in loaders.values) {
+        try {
+          await loader.load();
+        } catch (_) {
+          // Mantém fallback para fontes do sistema quando o face embutido falhar.
         }
       }
     }
-
-    // Dispara o download de cada (family, weight, style) e aguarda.
-    for (final entry in variants.entries) {
-      final family = entry.key;
-      for (final mask in entry.value) {
-        final weight = (mask & 1) != 0 ? FontWeight.w700 : FontWeight.w400;
-        final style = (mask & 2) != 0 ? FontStyle.italic : FontStyle.normal;
-        try {
-          GoogleFonts.getFont(
-            family,
-            textStyle: TextStyle(fontWeight: weight, fontStyle: style),
-          );
-        } catch (_) {}
-      }
-    }
-
-    try {
-      await GoogleFonts.pendingFonts().timeout(const Duration(seconds: 2));
-    } catch (_) {}
     if (mounted) setState(() => _fontsReady = true);
   }
 
@@ -548,13 +509,13 @@ class _PresentationViewerState extends State<PresentationViewer> {
         // Botão modo apresentador: visível apenas quando há 2 monitores
         if (PresenterChannel.hasMultipleScreens)
           IconButton(
-          icon: const Icon(
-            Icons.present_to_all_outlined,
-            color: Colors.white70,
+            icon: const Icon(
+              Icons.present_to_all_outlined,
+              color: Colors.white70,
+            ),
+            tooltip: 'Modo apresentador (requer 2 monitores)',
+            onPressed: _enterPresenterMode,
           ),
-          tooltip: 'Modo apresentador (requer 2 monitores)',
-          onPressed: _enterPresenterMode,
-        ),
       ],
     );
   }

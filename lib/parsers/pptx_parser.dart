@@ -110,6 +110,10 @@ class PptxParser {
     final theme = themePath.isNotEmpty
         ? _parseTheme(themePath)
         : OOXMLTheme.defaultTheme;
+    final embeddedFonts = _parseEmbeddedFonts(
+      presRoot,
+      presentationRels: presRels,
+    );
 
     final cr = ColorResolver(theme);
 
@@ -144,6 +148,7 @@ class PptxParser {
       slideWidthEmu: slideWidthEmu,
       slideHeightEmu: slideHeightEmu,
       theme: theme,
+      embeddedFonts: embeddedFonts,
     );
   }
 
@@ -202,6 +207,139 @@ class PptxParser {
       majorFontLatin: majorFont,
       minorFontLatin: minorFont,
     );
+  }
+
+  List<EmbeddedFontFace> _parseEmbeddedFonts(
+    XmlElement presentationRoot, {
+    required Map<String, String> presentationRels,
+  }) {
+    final faces = <EmbeddedFontFace>[];
+    final dedup = <String>{};
+
+    void collectFrom(XmlElement root, Map<String, String> rels) {
+      final embeddedFontLst = root.deep('embeddedFontLst');
+      if (embeddedFontLst == null) return;
+
+      for (final embedded in embeddedFontLst.children_('embeddedFont')) {
+        final family = embedded.child('font')?.attr('typeface')?.trim() ?? '';
+        if (family.isEmpty) continue;
+
+        final sharedKey = _extractFontKey(embedded);
+        final variants = [
+          ('regular', false, false),
+          ('embedRegular', false, false),
+          ('bold', true, false),
+          ('embedBold', true, false),
+          ('italic', false, true),
+          ('embedItalic', false, true),
+          ('boldItalic', true, true),
+          ('embedBoldItalic', true, true),
+        ];
+
+        for (final (tag, bold, italic) in variants) {
+          final variant = embedded.child(tag);
+          if (variant == null) continue;
+
+          final rid = _extractRid(variant);
+          if (rid == null) continue;
+
+          final target = rels[rid];
+          if (target == null || target.isEmpty) continue;
+
+          final raw = _files[target];
+          if (raw == null || raw.isEmpty) continue;
+
+          final key = _extractFontKey(variant) ?? sharedKey;
+          final decoded = _decodeEmbeddedFontPart(
+            raw,
+            target: target,
+            key: key,
+          );
+
+          final dedupKey =
+              '${family.toLowerCase()}|${bold ? 1 : 0}|${italic ? 1 : 0}|$target';
+          if (!dedup.add(dedupKey)) continue;
+
+          faces.add(
+            EmbeddedFontFace(
+              family: family,
+              bold: bold,
+              italic: italic,
+              bytes: decoded,
+            ),
+          );
+        }
+      }
+    }
+
+    collectFrom(presentationRoot, presentationRels);
+
+    final fontTablePath = presentationRels.values.firstWhere(
+      (v) => v.contains('fontTable'),
+      orElse: () => '',
+    );
+    if (fontTablePath.isNotEmpty) {
+      final fontTableDoc = _parseXml(fontTablePath);
+      if (fontTableDoc != null) {
+        collectFrom(fontTableDoc.rootElement, _rels(fontTablePath));
+      }
+    }
+
+    return faces;
+  }
+
+  String? _extractRid(XmlElement element) {
+    return element.attributes
+        .where(
+          (a) =>
+              a.localName == 'id' &&
+              (a.name.prefix == 'r' ||
+                  (a.namespaceUri?.contains('relationships') ?? false)),
+        )
+        .map((a) => a.value)
+        .firstOrNull;
+  }
+
+  String? _extractFontKey(XmlElement element) {
+    final direct = element.attr('fontKey') ?? element.attr('key');
+    if (direct != null && direct.trim().isNotEmpty) return direct.trim();
+
+    final keyChild = element.child('fontKey');
+    final keyVal = keyChild?.attr('val') ?? keyChild?.attr('fontKey');
+    if (keyVal != null && keyVal.trim().isNotEmpty) return keyVal.trim();
+
+    return null;
+  }
+
+  Uint8List _decodeEmbeddedFontPart(
+    Uint8List bytes, {
+    required String target,
+    required String? key,
+  }) {
+    if (!target.toLowerCase().endsWith('.odttf')) return bytes;
+    final guid = _guidToBytes(key);
+    if (guid == null) return bytes;
+
+    final result = Uint8List.fromList(bytes);
+    final reversed = guid.reversed.toList(growable: false);
+    final limit = result.length < 32 ? result.length : 32;
+    for (var i = 0; i < limit; i++) {
+      result[i] = result[i] ^ reversed[i % 16];
+    }
+    return result;
+  }
+
+  List<int>? _guidToBytes(String? key) {
+    if (key == null || key.isEmpty) return null;
+    final clean = key.replaceAll(RegExp(r'[^0-9A-Fa-f]'), '');
+    if (clean.length != 32) return null;
+    final bytes = <int>[];
+    for (var i = 0; i < 32; i += 2) {
+      final value = int.tryParse(clean.substring(i, i + 2), radix: 16);
+      if (value == null) return null;
+      bytes.add(value);
+    }
+    return bytes;
   }
 
   // ── Slide ─────────────────────────────────────────────────────────────────
@@ -1256,34 +1394,47 @@ class PptxParser {
     final lnSpc = pPr?.child('lnSpc');
 
     var spaceBefore = base.spaceBeforePt;
+    var spaceBeforePct = base.spaceBeforePct;
     if (spcBef != null) {
       final spcPts = spcBef.child('spcPts');
       final spcPct = spcBef.child('spcPct');
       if (spcPts != null) {
         spaceBefore = (int.tryParse(spcPts.attr('val') ?? '0') ?? 0) / 100.0;
+        spaceBeforePct = null;
       } else if (spcPct != null) {
-        // percentual — approx 12pt * pct
-        spaceBefore =
-            12.0 *
-            (int.tryParse(spcPct.attr('val') ?? '100000') ?? 100000) /
-            100000.0;
+        spaceBefore = null;
+        spaceBeforePct =
+            (int.tryParse(spcPct.attr('val') ?? '100000') ?? 100000) / 1000.0;
       }
     }
 
     var spaceAfter = base.spaceAfterPt;
+    var spaceAfterPct = base.spaceAfterPct;
     if (spcAft != null) {
       final spcPts = spcAft.child('spcPts');
+      final spcPct = spcAft.child('spcPct');
       if (spcPts != null) {
         spaceAfter = (int.tryParse(spcPts.attr('val') ?? '0') ?? 0) / 100.0;
+        spaceAfterPct = null;
+      } else if (spcPct != null) {
+        spaceAfter = null;
+        spaceAfterPct =
+            (int.tryParse(spcPct.attr('val') ?? '100000') ?? 100000) / 1000.0;
       }
     }
 
     var lineSpacingPct = base.lineSpacingPct;
+    var lineSpacingPt = base.lineSpacingPt;
     if (lnSpc != null) {
       final spcPct = lnSpc.child('spcPct');
+      final spcPts = lnSpc.child('spcPts');
       if (spcPct != null) {
         lineSpacingPct =
             (int.tryParse(spcPct.attr('val') ?? '100000') ?? 100000) / 1000.0;
+        lineSpacingPt = null;
+      } else if (spcPts != null) {
+        lineSpacingPt = (int.tryParse(spcPts.attr('val') ?? '0') ?? 0) / 100.0;
+        lineSpacingPct = null;
       }
     }
 
@@ -1321,8 +1472,11 @@ class PptxParser {
     return ParagraphProperties(
       alignment: alignment,
       spaceBeforePt: spaceBefore,
+      spaceBeforePct: spaceBeforePct,
       spaceAfterPt: spaceAfter,
+      spaceAfterPct: spaceAfterPct,
       lineSpacingPct: lineSpacingPct,
+      lineSpacingPt: lineSpacingPt,
       marLeftEmu: marL,
       level: lvl,
       bullet: bullet,
@@ -1341,9 +1495,25 @@ class PptxParser {
     final parsedSize = szAttr != null
         ? (int.tryParse(szAttr) ?? 0) / 100.0
         : null;
-    final fontSizePt = parsedSize == null
-        ? base.fontSizePt
-        : (parsedSize == 0 ? null : parsedSize);
+    final fontSizePt = (parsedSize == 0 ? null : parsedSize) ?? base.fontSizePt;
+
+    final spcAttr = rPr.attr('spc');
+    final parsedSpc = spcAttr == null
+        ? null
+        : (int.tryParse(spcAttr) ?? 0) / 100.0;
+    final letterSpacingPt = parsedSpc ?? base.letterSpacingPt;
+
+    final baselineAttr = rPr.attr('baseline');
+    final parsedBaseline = baselineAttr == null
+        ? null
+        : (int.tryParse(baselineAttr) ?? 0) / 1000.0;
+    final baselinePct = parsedBaseline ?? base.baselinePct;
+
+    final kernAttr = rPr.attr('kern');
+    final parsedKern = kernAttr == null
+        ? null
+        : (int.tryParse(kernAttr) ?? 0) / 100.0;
+    final kerningPt = parsedKern ?? base.kerningPt;
 
     var bold = base.bold;
     final bVal = rPr.attr('b');
@@ -1375,6 +1545,9 @@ class PptxParser {
 
     return RunProperties(
       fontSizePt: fontSizePt,
+      letterSpacingPt: letterSpacingPt,
+      baselinePct: baselinePct,
+      kerningPt: kerningPt,
       bold: bold,
       italic: italic,
       underline: underline,
