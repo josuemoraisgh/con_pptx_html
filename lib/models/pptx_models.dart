@@ -21,7 +21,7 @@ class PresentationData {
   });
 
   // Largura de canvas normalizada para 960 px
-  double get canvasWidth => 960.0;
+  double get canvasWidth => 1280.0;
 
   double get canvasHeight => slideWidthEmu > 0
       ? canvasWidth * slideHeightEmu / slideWidthEmu
@@ -252,7 +252,9 @@ class TextParagraph {
   final List<TextRun> runs;
   final ParagraphProperties props;
 
-  const TextParagraph({required this.runs, required this.props});
+  final RunProperties? endProps; // Props do endParaRPr para parágrafos vazios
+
+  const TextParagraph({required this.runs, required this.props, this.endProps});
 }
 
 class TextRun {

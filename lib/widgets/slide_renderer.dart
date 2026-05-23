@@ -772,11 +772,16 @@ class SlideRenderer extends StatelessWidget {
     // PowerPoint default: text overflows its bounding box without clipping.
     // Using Align for vertical positioning; overflow is rendered without clip
     // to match PowerPoint's default behaviour (no autofit = text can overflow).
-    return Align(
-      alignment: alignment,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: availableWidth),
-        child: column,
+    return ClipRect(
+      child: Align(
+        alignment: alignment,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: availableWidth),
+          child: SingleChildScrollView(
+            physics: const NeverScrollableScrollPhysics(),
+            child: column,
+          ),
+        ),
       ),
     );
   }
@@ -829,6 +834,7 @@ class SlideRenderer extends StatelessWidget {
     );
 
     // Recuo para listas / bullets
+    // Não renderizar bullet em parágrafos "vazios" (apenas zero-width-space)
     if (props.bullet != null || props.marLeftEmu != null) {
       final indent = props.marLeftEmu != null
           ? pres.emuToPx(props.marLeftEmu!)
@@ -897,14 +903,7 @@ class SlideRenderer extends StatelessWidget {
     );
     final fontSizePt = (rp.fontSizePt ?? 18.0) * fontScale;
     final family = _resolveFont(rp.fontFamily, pres);
-    // PowerPoint "100% line spacing" (spcPct=100) = font's natural line height.
-    // Flutter height:null = natural. height:1.0 would clip ascenders/descenders.
-    // Only set an explicit height when spacing differs from natural (100%).
-    final double? lineHeight =
-        (lineSpacingMultiplier == 1.0 && lineSpaceReduction == 0.0)
-        ? null
-        : lineSpacingMultiplier * (1.0 - lineSpaceReduction);
-
+    final lineHeight = 1.0 * lineSpacingMultiplier * (1.0 - lineSpaceReduction);
     final baseStyle = TextStyle(
       fontSize: fontSize,
       fontWeight: rp.bold ? FontWeight.bold : FontWeight.normal,
@@ -913,7 +912,7 @@ class SlideRenderer extends StatelessWidget {
       decorationColor: rp.underlineColor ?? rp.color,
       decorationStyle: _textDecorationStyle(rp),
       color: rp.color ?? Colors.black,
-      letterSpacing: (rp.letterSpacingPt ?? 0) * _ptToPx,
+      letterSpacing: (rp.letterSpacingPt ?? 0) * _ptToPx * fontScale,
       height: lineHeight,
       fontFamily: family,
       fontFamilyFallback: _fontFallbackFor(family),

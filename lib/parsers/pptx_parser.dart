@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
@@ -1358,7 +1358,17 @@ class PptxParser {
       }
     }
 
-    return TextParagraph(runs: runs, props: props);
+    // Parágrafos vazios: usar endParaRPr para preservar altura da linha
+    // Preservar props do endParaRPr para calcular altura de parágrafos vazios
+    RunProperties? endParaProps;
+    if (runs.isEmpty) {
+      final endParaRPr = p.child('endParaRPr');
+      if (endParaRPr != null) {
+        endParaProps = _parseRPr(endParaRPr, cr, inherit: paraRun);
+      }
+    }
+
+    return TextParagraph(runs: runs, props: props, endProps: endParaProps);
   }
 
   ParagraphProperties _parsePPr(
