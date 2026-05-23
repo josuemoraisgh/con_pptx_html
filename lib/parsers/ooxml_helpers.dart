@@ -44,6 +44,7 @@ class ColorResolver {
     final srgb = el.child('srgbClr');
     if (srgb != null) {
       base = hexToColor(srgb.attr('val'));
+      if (base != null) base = _applyMods(base, srgb);
     }
 
     final scheme = el.child('schemeClr');
@@ -56,11 +57,13 @@ class ColorResolver {
     final sys = el.child('sysClr');
     if (sys != null) {
       base = hexToColor(sys.attr('lastClr'));
+      if (base != null) base = _applyMods(base, sys);
     }
 
     final prst = el.child('prstClr');
     if (prst != null) {
       base = _presetColor(prst.attr('val') ?? '');
+      if (base != null) base = _applyMods(base, prst);
     }
 
     if (base == null) return null;

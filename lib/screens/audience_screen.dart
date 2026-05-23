@@ -55,6 +55,7 @@ class _AudienceScreenState extends State<AudienceScreen> {
           _slideIndex = slideIndex;
           _animStep = animStep;
         });
+        browser.saveViewerState(_slideIndex, _animStep);
       case PresenterSwapMessage():
         setState(() => _swapped = !_swapped);
       case PresenterNavigateMessage():
@@ -72,11 +73,13 @@ class _AudienceScreenState extends State<AudienceScreen> {
   }
 
   void _enterFullScreen() {
+    browser.saveViewerState(_slideIndex, _animStep);
     browser.requestFullscreen();
     setState(() => _isFullScreen = true);
   }
 
   void _exitFullScreen() {
+    browser.saveViewerState(_slideIndex, _animStep);
     browser.exitFullscreen();
     setState(() => _isFullScreen = false);
   }

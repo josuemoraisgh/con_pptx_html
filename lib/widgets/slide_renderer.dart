@@ -539,27 +539,18 @@ class SlideRenderer extends StatelessWidget {
     if (el.paragraphs.isNotEmpty) {
       final availW = (width - insetL - insetR).clamp(0.0, double.infinity);
       final availH = (height - insetT - insetB).clamp(0.0, double.infinity);
-      Widget body = _buildTextBody(
-        el.paragraphs,
-        el.bodyProps,
-        pres,
-        availW,
-        defaultTextColor: _resolveDefaultTextColorForShape(el),
-      );
-      // Encolhe automaticamente o bloco de texto para caber na área útil
-      // da caixa e evitar overflow visual em layouts densos.
-      body = SizedBox(
-        width: availW,
-        height: availH,
-        child: FittedBox(
+      Widget body = _buildTextBody(el.paragraphs, el.bodyProps, pres, availW);
+      if (availW < 100.0 || availH < 40.0) {
+        body = FittedBox(
           fit: BoxFit.scaleDown,
-          alignment: _alignmentForVert(el.bodyProps.vertAlign),
+          alignment: Alignment.center,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: availW),
             child: body,
           ),
-        ),
-      );
+        );
+      }
+      body = SizedBox(width: availW, height: availH, child: body);
       textWidget = Padding(
         padding: EdgeInsets.fromLTRB(insetL, insetT, insetR, insetB),
         child: body,
@@ -590,47 +581,6 @@ class SlideRenderer extends StatelessWidget {
     }
     return shapeBody;
   }
-
-  Color? _resolveDefaultTextColorForShape(ShapeElement el) {
-    final placeholder = el.placeholderType?.toLowerCase();
-    final slideDark = _isDarkSlideBackground();
-
-    if (placeholder == 'title' ||
-        placeholder == 'ctrtitle' ||
-        placeholder == 'subtitle') {
-      return slideDark ? const Color(0xFFF0F4F8) : const Color(0xFF111827);
-    }
-
-    if (placeholder == 'body') {
-      return slideDark ? const Color(0xFFCBD5E0) : const Color(0xFF1F2937);
-    }
-
-    final fill = el.fill;
-    if (fill is SolidFill) {
-      return _isDarkColor(fill.color)
-          ? const Color(0xFFF0F4F8)
-          : const Color(0xFF111827);
-    }
-
-    return slideDark ? const Color(0xFFE2E8F0) : null;
-  }
-
-  bool _isDarkSlideBackground() {
-    final bg = slide.background;
-    final fill = bg?.fill;
-    if (fill is SolidFill) {
-      return _isDarkColor(fill.color);
-    }
-    if (fill is GradientFill && fill.stops.isNotEmpty) {
-      final avgLuminance =
-          fill.stops.map((s) => s.color.computeLuminance()).reduce((a, b) => a + b) /
-          fill.stops.length;
-      return avgLuminance < 0.45;
-    }
-    return false;
-  }
-
-  bool _isDarkColor(Color color) => color.computeLuminance() < 0.45;
 
   Widget _buildCommandOverlay(_CommandOverlaySpec spec, PresentationData pres) {
     final left = pres.emuToPx(spec.bounds.xEmu);
@@ -784,7 +734,6 @@ class SlideRenderer extends StatelessWidget {
     TextBodyProperties bodyProps,
     PresentationData pres,
     double availableWidth,
-    {Color? defaultTextColor}
   ) {
     final fontScale = bodyProps.fontScale;
     final lineSpaceReduction = bodyProps.lineSpaceReduction;
@@ -812,7 +761,6 @@ class SlideRenderer extends StatelessWidget {
           lineSpaceReduction,
           bodyProps.wordWrap,
           autoNumber,
-          defaultTextColor,
         ),
       );
     }
@@ -845,7 +793,6 @@ class SlideRenderer extends StatelessWidget {
     double lineSpaceReduction = 0.0,
     bool wordWrap = true,
     String? autoNumber,
-    Color? defaultTextColor,
   ]) {
     final props = para.props;
     final lineSpacingMultiplier = ((props.lineSpacingPct ?? 100.0) / 100.0)
@@ -871,7 +818,6 @@ class SlideRenderer extends StatelessWidget {
             fontScale: fontScale,
             lineSpaceReduction: lineSpaceReduction,
             lineSpacingMultiplier: lineSpacingMultiplier,
-            defaultColor: defaultTextColor,
           ),
         ),
       );
@@ -898,7 +844,6 @@ class SlideRenderer extends StatelessWidget {
           fontScale,
           lineSpaceReduction,
           lineSpacingMultiplier,
-          defaultColor: defaultTextColor,
         );
         textWidget = Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -933,17 +878,15 @@ class SlideRenderer extends StatelessWidget {
 
   TextStyle _runStyle(
     RunProperties rp,
-    PresentationData pres,
-    {
+    PresentationData pres, {
     double fontScale = 1.0,
     double lineSpaceReduction = 0.0,
     double lineSpacingMultiplier = 1.0,
-    Color? defaultColor,
   }) {
     final fontSize = ((rp.fontSizePt ?? 18.0) * fontScale).clamp(6.0, 200.0);
     final family = _mapToSafeFont(_resolveFont(rp.fontFamily, pres));
     final lineHeight =
-        (1.2 * lineSpacingMultiplier * (1.0 - lineSpaceReduction)).clamp(
+        (1.0 * lineSpacingMultiplier * (1.0 - lineSpaceReduction)).clamp(
           0.8,
           3.0,
         );
@@ -954,7 +897,7 @@ class SlideRenderer extends StatelessWidget {
       fontStyle: rp.italic ? FontStyle.italic : FontStyle.normal,
       decoration: _textDecoration(rp),
       decorationColor: rp.color,
-      color: rp.color ?? defaultColor ?? Colors.black,
+      color: rp.color ?? Colors.black,
       height: lineHeight,
       fontFamilyFallback: _fontFallbackFor(family),
     );
@@ -1001,40 +944,29 @@ class SlideRenderer extends StatelessWidget {
   /// que não existem na CDN — assim o nome resolvido sempre é baixável e o
   /// pre-load no PresentationViewer garante que tudo já está pronto.
   static const Map<String, String> _safeFontMap = {
-    'calibri': 'Inter',
-    'calibri light': 'Inter',
-    'cambria': 'Lora',
-    'cambria math': 'Lora',
-    'arial': 'Inter',
-    'arial black': 'Inter',
-    'helvetica': 'Inter',
-    'times new roman': 'Lora',
-    'times': 'Lora',
-    'georgia': 'Lora',
-    'verdana': 'Inter',
-    'tahoma': 'Inter',
-    'segoe ui': 'Inter',
-    'comic sans ms': 'Inter',
-    'trebuchet ms': 'Inter',
+    'calibri': 'Carlito',
+    'calibri light': 'Carlito',
+    'cambria': 'Caladea',
+    'cambria math': 'Caladea',
+    'arial': 'Arimo',
+    'arial black': 'Arimo',
+    'helvetica': 'Arimo',
+    'times new roman': 'Tinos',
+    'times': 'Tinos',
+    'georgia': 'Tinos',
+    'verdana': 'Arimo',
+    'tahoma': 'Arimo',
+    'segoe ui': 'Arimo',
+    'comic sans ms': 'Comic Neue',
+    'trebuchet ms': 'Arimo',
   };
 
   static String mapToSafeFont(String name) {
-    if (name.isEmpty) return 'Inter';
+    if (name.isEmpty) return 'Carlito';
     return _safeFontMap[name.toLowerCase()] ?? name;
   }
 
   String _mapToSafeFont(String name) => mapToSafeFont(name);
-
-  Alignment _alignmentForVert(VerticalAlignment v) {
-    switch (v) {
-      case VerticalAlignment.top:
-        return Alignment.topLeft;
-      case VerticalAlignment.middle:
-        return Alignment.centerLeft;
-      case VerticalAlignment.bottom:
-        return Alignment.bottomLeft;
-    }
-  }
 
   TextStyle _bulletRunStyle(
     TextParagraph para,
@@ -1042,7 +974,6 @@ class SlideRenderer extends StatelessWidget {
     double fontScale,
     double lineSpaceReduction,
     double lineSpacingMultiplier,
-    {Color? defaultColor}
   ) {
     final firstRun = para.runs.firstOrNull?.props ?? const RunProperties();
     final bulletColor = para.props.bullet?.color;
@@ -1052,7 +983,6 @@ class SlideRenderer extends StatelessWidget {
       fontScale: fontScale,
       lineSpaceReduction: lineSpaceReduction,
       lineSpacingMultiplier: lineSpacingMultiplier,
-      defaultColor: defaultColor,
     );
     return bulletColor != null ? style.copyWith(color: bulletColor) : style;
   }
@@ -1095,9 +1025,7 @@ class SlideRenderer extends StatelessWidget {
             fit: BoxFit.fill,
             placeholderBuilder: (context) => Container(
               color: Colors.grey.shade200,
-              child: const Center(
-                child: Icon(Icons.image, color: Colors.grey),
-              ),
+              child: const Center(child: Icon(Icons.image, color: Colors.grey)),
             ),
           )
         : Image.memory(
@@ -1970,6 +1898,47 @@ class _ShapePainter extends CustomPainter {
     switch (geometry) {
       case 'ellipse':
         return Path()..addOval(rect);
+      case 'flowChartTerminator':
+        final radius = math.min(rect.width, rect.height) / 2.0;
+        return Path()
+          ..addRRect(RRect.fromRectAndRadius(rect, Radius.circular(radius)));
+      case 'flowChartDecision':
+        return Path()
+          ..moveTo(rect.center.dx, rect.top)
+          ..lineTo(rect.right, rect.center.dy)
+          ..lineTo(rect.center.dx, rect.bottom)
+          ..lineTo(rect.left, rect.center.dy)
+          ..close();
+      case 'flowChartProcess':
+        return Path()..addRect(rect);
+      case 'downArrow':
+        final headH = rect.height * 0.35;
+        final shaftW = rect.width * 0.38;
+        final shaftLeft = rect.center.dx - shaftW / 2;
+        final shaftRight = rect.center.dx + shaftW / 2;
+        return Path()
+          ..moveTo(rect.center.dx, rect.bottom)
+          ..lineTo(rect.right, rect.top + rect.height - headH)
+          ..lineTo(shaftRight, rect.top + rect.height - headH)
+          ..lineTo(shaftRight, rect.top)
+          ..lineTo(shaftLeft, rect.top)
+          ..lineTo(shaftLeft, rect.top + rect.height - headH)
+          ..lineTo(rect.left, rect.top + rect.height - headH)
+          ..close();
+      case 'upArrow':
+        final headH = rect.height * 0.35;
+        final shaftW = rect.width * 0.38;
+        final shaftLeft = rect.center.dx - shaftW / 2;
+        final shaftRight = rect.center.dx + shaftW / 2;
+        return Path()
+          ..moveTo(rect.center.dx, rect.top)
+          ..lineTo(rect.right, rect.top + headH)
+          ..lineTo(shaftRight, rect.top + headH)
+          ..lineTo(shaftRight, rect.bottom)
+          ..lineTo(shaftLeft, rect.bottom)
+          ..lineTo(shaftLeft, rect.top + headH)
+          ..lineTo(rect.left, rect.top + headH)
+          ..close();
       case 'roundRect':
         final double r;
         if (adjValue != null) {

@@ -16,6 +16,9 @@ class PptxParser {
   // Chave: idx ou type do ph. Valor: posição em EMU.
   final Map<String, ({double x, double y, double cx, double cy})> _phMap = {};
 
+  // Contexto de herança de estilos de texto (master/layout -> slide).
+  _TextStyleContext? _textStyleContext;
+
   // ── Relacionamentos ────────────────────────────────────────────────────────
   /// Retorna o mapa { rId → target } para um arquivo-pai.
   Map<String, String> _rels(String parentPath) {
@@ -247,7 +250,13 @@ class PptxParser {
         var z = 0;
         for (final child in masterSpTree.children.whereType<XmlElement>()) {
           if (_isPlaceholder(child)) continue;
-          final els = _parseSpTreeChildList(child, z, cr, masterRels);
+          final els = _parseSpTreeChildList(
+            child,
+            z,
+            cr,
+            masterRels,
+            textStyleContext: null,
+          );
           masterElements.addAll(els);
           z += els.length;
         }
@@ -265,7 +274,13 @@ class PptxParser {
         var z = 1000;
         for (final child in layoutSpTree.children.whereType<XmlElement>()) {
           if (_isPlaceholder(child)) continue;
-          final els = _parseSpTreeChildList(child, z, cr, layoutRels);
+          final els = _parseSpTreeChildList(
+            child,
+            z,
+            cr,
+            layoutRels,
+            textStyleContext: null,
+          );
           layoutElements.addAll(els);
           z += els.length;
         }
@@ -280,9 +295,22 @@ class PptxParser {
     final slideElements = <SlideElement>[];
     var zOrder = 2000;
 
+    _textStyleContext = _TextStyleContext(
+      colorResolver: cr,
+      masterTxStyles: masterDoc?.rootElement.deep('txStyles'),
+      masterSpTree: masterDoc?.rootElement.deep('spTree'),
+      layoutSpTree: layoutDoc?.rootElement.deep('spTree'),
+    );
+
     if (spTree != null) {
       for (final child in spTree.children.whereType<XmlElement>()) {
-        final els = _parseSpTreeChildList(child, zOrder, cr, slideRels);
+        final els = _parseSpTreeChildList(
+          child,
+          zOrder,
+          cr,
+          slideRels,
+          textStyleContext: _textStyleContext,
+        );
         slideElements.addAll(els);
         zOrder += els.length;
       }
@@ -454,11 +482,12 @@ class PptxParser {
     XmlElement el,
     int zOrder,
     ColorResolver cr,
-    Map<String, String> rels,
-  ) {
+    Map<String, String> rels, {
+    _TextStyleContext? textStyleContext,
+  }) {
     switch (el.localName) {
       case 'sp':
-        final e = _parseSp(el, zOrder, cr);
+        final e = _parseSp(el, zOrder, cr, textStyleContext: textStyleContext);
         return e != null ? [e] : [];
       case 'cxnSp': // conector — trata como shape sem texto
         final e = _parseCxnSp(el, zOrder, cr);
@@ -470,7 +499,13 @@ class PptxParser {
         final e = _parseGraphicFrame(el, zOrder, cr);
         return e != null ? [e] : [];
       case 'grpSp':
-        return _parseGrpSp(el, zOrder, cr, rels);
+        return _parseGrpSp(
+          el,
+          zOrder,
+          cr,
+          rels,
+          textStyleContext: textStyleContext,
+        );
       default:
         return [];
     }
@@ -507,7 +542,12 @@ class PptxParser {
 
   // ── Shape (p:sp) ──────────────────────────────────────────────────────────
 
-  ShapeElement? _parseSp(XmlElement sp, int zOrder, ColorResolver cr) {
+  ShapeElement? _parseSp(
+    XmlElement sp,
+    int zOrder,
+    ColorResolver cr, {
+    _TextStyleContext? textStyleContext,
+  }) {
     final spPr = sp.child('spPr');
     var xfrm = _parseXfrm(sp);
     final cNvPr = sp.child('nvSpPr')?.child('cNvPr');
@@ -516,6 +556,7 @@ class PptxParser {
 
     final ph = sp.child('nvSpPr')?.child('nvPr')?.child('ph');
     final placeholderType = ph?.attr('type');
+    final placeholderIdx = ph?.attr('idx') ?? '0';
 
     // Herança de posição: placeholder sem xfrm próprio usa posição do layout/master
     if ((xfrm.cx == 0 && xfrm.cy == 0) && _phMap.isNotEmpty) {
@@ -545,10 +586,24 @@ class PptxParser {
     final fill = parseFill(spPr, cr);
     final outline = parseLine(spPr?.child('ln'), cr);
     final txBody = sp.child('txBody');
+    final textDefaults = txBody != null
+        ? _resolveTextDefaults(
+            txBody,
+            placeholderType: placeholderType,
+            placeholderIdx: placeholderIdx,
+            context: textStyleContext,
+          )
+        : null;
     final paragraphs = txBody != null
-        ? _parseTxBody(txBody, cr)
+        ? _parseTxBody(txBody, cr, defaults: textDefaults)
         : <TextParagraph>[];
-    final bodyProps = _parseBodyPr(txBody?.child('bodyPr'));
+    final bodyPrEl = txBody?.child('bodyPr');
+    final bodyProps = _resolveBodyProps(
+      bodyPrEl,
+      placeholderType: placeholderType,
+      placeholderIdx: placeholderIdx,
+      context: textStyleContext,
+    );
 
     return ShapeElement(
       xEmu: xfrm.x,
@@ -624,8 +679,11 @@ class PptxParser {
         .firstOrNull;
     final relId = embedAttr?.value ?? svgEmbedAttr?.value;
     final imgPath = relId != null ? rels[relId] : null;
-    final bytes = imgPath != null ? _files[imgPath] : null;
+    var bytes = imgPath != null ? _files[imgPath] : null;
     final mimeType = _detectImageMimeType(imgPath, bytes);
+    if (bytes != null && mimeType == 'image/svg+xml') {
+      bytes = _normalizeSvgBytes(bytes);
+    }
 
     return ImageElement(
       xEmu: xfrm.x,
@@ -640,6 +698,28 @@ class PptxParser {
       mimeType: mimeType,
       altText: altText,
     );
+  }
+
+  Uint8List _normalizeSvgBytes(Uint8List original) {
+    try {
+      final svg = utf8.decode(original, allowMalformed: true);
+      final fillMatch = RegExp(
+        r'\.iconFill\s*\{\s*fill\s*:\s*(#[0-9A-Fa-f]{3,8})\s*;?\s*\}',
+      ).firstMatch(svg);
+      if (fillMatch == null) return original;
+
+      final fill = fillMatch.group(1);
+      if (fill == null || fill.isEmpty) return original;
+
+      final normalized = svg
+          .replaceAll('class="iconFill"', 'class="iconFill" fill="$fill"')
+          .replaceAll("class='iconFill'", "class='iconFill' fill='$fill'")
+          .replaceAll(RegExp(r'<style[^>]*>[\s\S]*?<\/style>'), '');
+
+      return Uint8List.fromList(utf8.encode(normalized));
+    } catch (_) {
+      return original;
+    }
   }
 
   String? _detectImageMimeType(String? path, Uint8List? bytes) {
@@ -769,8 +849,9 @@ class PptxParser {
     XmlElement grp,
     int zOrderStart,
     ColorResolver cr,
-    Map<String, String> rels,
-  ) {
+    Map<String, String> rels, {
+    _TextStyleContext? textStyleContext,
+  }) {
     // ID do grupo (cNvPr/@id) — os filhos herdam este ID para que animações
     // que referenciam o grupo (spTgt spid="N") funcionem corretamente.
     final groupAltText = _extractAltText(
@@ -814,7 +895,13 @@ class PptxParser {
       if (child.localName == 'grpSpPr' || child.localName == 'nvGrpSpPr') {
         continue;
       }
-      final els = _parseSpTreeChildList(child, zOrder, cr, rels);
+      final els = _parseSpTreeChildList(
+        child,
+        zOrder,
+        cr,
+        rels,
+        textStyleContext: textStyleContext,
+      );
       for (final el in els) {
         result.add(
           _withCommandText(
@@ -1081,13 +1168,28 @@ class PptxParser {
 
   // ── Corpo de texto ────────────────────────────────────────────────────────
 
-  List<TextParagraph> _parseTxBody(XmlElement txBody, ColorResolver cr) {
-    return txBody.children_('p').map((p) => _parseParagraph(p, cr)).toList();
+  List<TextParagraph> _parseTxBody(
+    XmlElement txBody,
+    ColorResolver cr, {
+    _ResolvedTextDefaults? defaults,
+  }) {
+    return txBody
+        .children_('p')
+        .map((p) => _parseParagraph(p, cr, defaults: defaults))
+        .toList();
   }
 
-  TextParagraph _parseParagraph(XmlElement p, ColorResolver cr) {
+  TextParagraph _parseParagraph(
+    XmlElement p,
+    ColorResolver cr, {
+    _ResolvedTextDefaults? defaults,
+  }) {
     final pPr = p.child('pPr');
-    final props = _parsePPr(pPr, cr);
+    final level = int.tryParse(pPr?.attr('lvl') ?? '') ?? 0;
+    final inheritedPPr = defaults?.paragraphByLevel[level];
+    final props = _parsePPr(pPr, cr, inherit: inheritedPPr);
+    final inheritedRun = defaults?.runByLevel[level];
+    final paraRun = _parseRPr(pPr?.child('defRPr'), cr, inherit: inheritedRun);
     final runs = <TextRun>[];
 
     for (final child in p.children.whereType<XmlElement>()) {
@@ -1096,17 +1198,22 @@ class PptxParser {
           final rPr = child.child('rPr');
           final t = child.child('t');
           if (t != null) {
-            runs.add(TextRun(text: t.innerText, props: _parseRPr(rPr, cr)));
+            runs.add(
+              TextRun(
+                text: t.innerText,
+                props: _parseRPr(rPr, cr, inherit: paraRun),
+              ),
+            );
           }
         case 'br':
-          runs.add(const TextRun(text: '\n', props: RunProperties.empty));
+          runs.add(TextRun(text: '\n', props: paraRun));
         case 'fld':
           final t = child.child('t');
           if (t != null) {
             runs.add(
               TextRun(
                 text: t.innerText,
-                props: _parseRPr(child.child('rPr'), cr),
+                props: _parseRPr(child.child('rPr'), cr, inherit: paraRun),
               ),
             );
           }
@@ -1116,11 +1223,17 @@ class PptxParser {
     return TextParagraph(runs: runs, props: props);
   }
 
-  ParagraphProperties _parsePPr(XmlElement? pPr, ColorResolver cr) {
-    if (pPr == null) return const ParagraphProperties();
+  ParagraphProperties _parsePPr(
+    XmlElement? pPr,
+    ColorResolver cr, {
+    ParagraphProperties? inherit,
+    int? forcedLevel,
+  }) {
+    final base = inherit ?? const ParagraphProperties();
+    if (pPr == null && forcedLevel == null) return base;
 
-    TextAlign alignment = TextAlign.left;
-    switch (pPr.attr('algn')) {
+    var alignment = base.alignment;
+    switch (pPr?.attr('algn')) {
       case 'ctr':
         alignment = TextAlign.center;
       case 'r':
@@ -1130,14 +1243,19 @@ class PptxParser {
         alignment = TextAlign.justify;
     }
 
-    final lvl = int.tryParse(pPr.attr('lvl') ?? '0') ?? 0;
-    final marL = double.tryParse(pPr.attr('marL') ?? '');
+    final lvl =
+        forcedLevel ??
+        int.tryParse(pPr?.attr('lvl') ?? '${base.level}') ??
+        base.level;
+    final marL = pPr?.attr('marL') != null
+        ? double.tryParse(pPr?.attr('marL') ?? '')
+        : base.marLeftEmu;
 
-    final spcBef = pPr.child('spcBef');
-    final spcAft = pPr.child('spcAft');
-    final lnSpc = pPr.child('lnSpc');
+    final spcBef = pPr?.child('spcBef');
+    final spcAft = pPr?.child('spcAft');
+    final lnSpc = pPr?.child('lnSpc');
 
-    double? spaceBefore;
+    var spaceBefore = base.spaceBeforePt;
     if (spcBef != null) {
       final spcPts = spcBef.child('spcPts');
       final spcPct = spcBef.child('spcPct');
@@ -1152,7 +1270,7 @@ class PptxParser {
       }
     }
 
-    double? spaceAfter;
+    var spaceAfter = base.spaceAfterPt;
     if (spcAft != null) {
       final spcPts = spcAft.child('spcPts');
       if (spcPts != null) {
@@ -1160,7 +1278,7 @@ class PptxParser {
       }
     }
 
-    double? lineSpacingPct;
+    var lineSpacingPct = base.lineSpacingPct;
     if (lnSpc != null) {
       final spcPct = lnSpc.child('spcPct');
       if (spcPct != null) {
@@ -1169,22 +1287,34 @@ class PptxParser {
       }
     }
 
-    BulletSpec? bullet;
-    final buChar = pPr.child('buChar');
-    final buNone = pPr.child('buNone');
-    final buAutoNum = pPr.child('buAutoNum');
-    final buClrTx = pPr.child('buClr');
+    var bullet = base.bullet;
+    final buChar = pPr?.child('buChar');
+    final buNone = pPr?.child('buNone');
+    final buAutoNum = pPr?.child('buAutoNum');
+    final buClrTx = pPr?.child('buClr');
     Color? bulletColor;
     if (buClrTx != null) bulletColor = cr.resolveColorElement(buClrTx);
 
-    if (buNone == null) {
+    if (buNone != null) {
+      bullet = null;
+    } else {
       if (buChar != null) {
         bullet = BulletSpec(
           char: buChar.attr('char') ?? '•',
-          color: bulletColor,
+          color: bulletColor ?? bullet?.color,
         );
       } else if (buAutoNum != null) {
-        bullet = const BulletSpec(isAutoNum: true);
+        bullet = BulletSpec(
+          isAutoNum: true,
+          color: bulletColor ?? bullet?.color,
+        );
+      } else if (bulletColor != null && bullet != null) {
+        bullet = BulletSpec(
+          char: bullet.char,
+          isAutoNum: bullet.isAutoNum,
+          color: bulletColor,
+          sizePct: bullet.sizePct,
+        );
       }
     }
 
@@ -1199,66 +1329,277 @@ class PptxParser {
     );
   }
 
-  RunProperties _parseRPr(XmlElement? rPr, ColorResolver cr) {
-    if (rPr == null) return const RunProperties();
+  RunProperties _parseRPr(
+    XmlElement? rPr,
+    ColorResolver cr, {
+    RunProperties? inherit,
+  }) {
+    final base = inherit ?? const RunProperties();
+    if (rPr == null) return base;
 
     final szAttr = rPr.attr('sz');
-    final fontSizePt = szAttr != null
+    final parsedSize = szAttr != null
         ? (int.tryParse(szAttr) ?? 0) / 100.0
         : null;
+    final fontSizePt = parsedSize == null
+        ? base.fontSizePt
+        : (parsedSize == 0 ? null : parsedSize);
 
-    // b="1" ou b="true"
+    var bold = base.bold;
     final bVal = rPr.attr('b');
-    final bold = bVal == '1' || bVal == 'true';
+    if (bVal != null) bold = bVal == '1' || bVal == 'true';
+
+    var italic = base.italic;
     final iVal = rPr.attr('i');
-    final italic = iVal == '1' || iVal == 'true';
-    final underline = rPr.attr('u') != null && rPr.attr('u') != 'none';
-    final strike =
-        rPr.attr('strike') != null && rPr.attr('strike') != 'noStrike';
+    if (iVal != null) italic = iVal == '1' || iVal == 'true';
 
-    Color? color;
+    var underline = base.underline;
+    final uVal = rPr.attr('u');
+    if (uVal != null) underline = uVal != 'none';
+
+    var strike = base.strikethrough;
+    final strikeVal = rPr.attr('strike');
+    if (strikeVal != null) strike = strikeVal != 'noStrike';
+
+    var color = base.color;
     final solidFill = rPr.child('solidFill');
-    if (solidFill != null) color = cr.resolveColorElement(solidFill);
+    if (solidFill != null) {
+      color = cr.resolveColorElement(solidFill) ?? color;
+    }
 
-    String? fontFamily;
+    var fontFamily = base.fontFamily;
     final latin = rPr.child('latin');
     final ea = rPr.child('ea');
-    fontFamily = latin?.attr('typeface') ?? ea?.attr('typeface');
+    final typeface = latin?.attr('typeface') ?? ea?.attr('typeface');
+    if (typeface != null && typeface.isNotEmpty) fontFamily = typeface;
 
     return RunProperties(
-      fontSizePt: fontSizePt == 0 ? null : fontSizePt,
+      fontSizePt: fontSizePt,
       bold: bold,
       italic: italic,
       underline: underline,
       strikethrough: strike,
       color: color,
       fontFamily: fontFamily,
+      isPlaceholder: inherit != null,
     );
   }
 
-  TextBodyProperties _parseBodyPr(XmlElement? bodyPr) {
-    if (bodyPr == null) return TextBodyProperties.defaults;
+  _ResolvedTextDefaults _resolveTextDefaults(
+    XmlElement txBody, {
+    required String? placeholderType,
+    required String? placeholderIdx,
+    required _TextStyleContext? context,
+  }) {
+    final cr = context?.colorResolver;
+    final paragraphByLevel = <int, ParagraphProperties>{
+      for (var i = 0; i < 9; i++) i: ParagraphProperties(level: i),
+    };
+    final runByLevel = <int, RunProperties>{
+      for (var i = 0; i < 9; i++) i: const RunProperties(),
+    };
 
-    VerticalAlignment vertAlign = VerticalAlignment.top;
-    switch (bodyPr.attr('anchor')) {
-      case 'ctr':
-        vertAlign = VerticalAlignment.middle;
-      case 'b':
-        vertAlign = VerticalAlignment.bottom;
+    void applyPPr(XmlElement pPr, ColorResolver resolver, {int? level}) {
+      final resolvedLevel = (level ?? _levelFromPPrTag(pPr.localName) ?? 0)
+          .clamp(0, 8)
+          .toInt();
+      paragraphByLevel[resolvedLevel] = _parsePPr(
+        pPr,
+        resolver,
+        inherit: paragraphByLevel[resolvedLevel],
+        forcedLevel: resolvedLevel,
+      );
+      runByLevel[resolvedLevel] = _parseRPr(
+        pPr.child('defRPr'),
+        resolver,
+        inherit: runByLevel[resolvedLevel],
+      );
     }
 
-    final wordWrap = bodyPr.attr('wrap') != 'none';
+    void applyLstStyle(XmlElement? lstStyle, ColorResolver resolver) {
+      if (lstStyle == null) return;
+      final defPPr = lstStyle.child('defPPr');
+      if (defPPr != null) applyPPr(defPPr, resolver, level: 0);
 
-    final insetLeft = double.tryParse(bodyPr.attr('lIns') ?? '') ?? 91440;
-    final insetRight = double.tryParse(bodyPr.attr('rIns') ?? '') ?? 91440;
-    // PowerPoint costuma renderizar caixas simples com margem vertical bem
-    // menor do que a margem padrão do esquema OOXML; usar 0 aqui aproxima o
-    // posicionamento visual dos blocos de texto do slide original.
-    final insetTop = double.tryParse(bodyPr.attr('tIns') ?? '') ?? 0;
-    final insetBottom = double.tryParse(bodyPr.attr('bIns') ?? '') ?? 0;
+      for (final child in lstStyle.children.whereType<XmlElement>()) {
+        if (!child.localName.endsWith('pPr')) continue;
+        final level = _levelFromPPrTag(child.localName);
+        if (level != null) applyPPr(child, resolver, level: level);
+      }
+    }
 
-    double fontScale = 1.0;
-    double lineSpaceReduction = 0.0;
+    void applyPlaceholderShape(XmlElement? shape, ColorResolver resolver) {
+      if (shape == null) return;
+      final tx = shape.child('txBody');
+      if (tx == null) return;
+      applyLstStyle(tx.child('lstStyle'), resolver);
+      for (final p in tx.children_('p')) {
+        final pPr = p.child('pPr');
+        if (pPr == null) continue;
+        final level = int.tryParse(pPr.attr('lvl') ?? '0') ?? 0;
+        applyPPr(pPr, resolver, level: level);
+      }
+    }
+
+    if (context != null && cr != null) {
+      final txStyles = context.masterTxStyles;
+      if (txStyles != null) {
+        final styleNode = _pickMasterStyleNode(txStyles, placeholderType);
+        if (styleNode != null) {
+          applyLstStyle(styleNode, cr);
+        }
+      }
+
+      final masterPlaceholder = _findPlaceholderShape(
+        context.masterSpTree,
+        placeholderType: placeholderType,
+        placeholderIdx: placeholderIdx,
+      );
+      applyPlaceholderShape(masterPlaceholder, cr);
+
+      final layoutPlaceholder = _findPlaceholderShape(
+        context.layoutSpTree,
+        placeholderType: placeholderType,
+        placeholderIdx: placeholderIdx,
+      );
+      applyPlaceholderShape(layoutPlaceholder, cr);
+
+      applyLstStyle(txBody.child('lstStyle'), cr);
+    }
+
+    final localResolver = cr ?? (context?.colorResolver);
+    if (localResolver != null) {
+      for (final p in txBody.children_('p')) {
+        final pPr = p.child('pPr');
+        if (pPr == null) continue;
+        final level = int.tryParse(pPr.attr('lvl') ?? '0') ?? 0;
+        applyPPr(pPr, localResolver, level: level);
+      }
+    }
+
+    return _ResolvedTextDefaults(
+      paragraphByLevel: paragraphByLevel,
+      runByLevel: runByLevel,
+    );
+  }
+
+  int? _levelFromPPrTag(String localName) {
+    final m = RegExp(r'^lvl(\d+)pPr$').firstMatch(localName);
+    if (m == null) return null;
+    final oneBased = int.tryParse(m.group(1) ?? '');
+    if (oneBased == null) return null;
+    return (oneBased - 1).clamp(0, 8);
+  }
+
+  XmlElement? _pickMasterStyleNode(
+    XmlElement txStyles,
+    String? placeholderType,
+  ) {
+    final type = (placeholderType ?? '').toLowerCase();
+    if (type == 'title' || type == 'ctrtitle') {
+      return txStyles.child('titleStyle') ?? txStyles.child('otherStyle');
+    }
+    if (type == 'subtitle' || type == 'body' || type == 'obj') {
+      return txStyles.child('bodyStyle') ?? txStyles.child('otherStyle');
+    }
+    return txStyles.child('otherStyle') ?? txStyles.child('bodyStyle');
+  }
+
+  XmlElement? _findPlaceholderShape(
+    XmlElement? spTree, {
+    required String? placeholderType,
+    required String? placeholderIdx,
+  }) {
+    if (spTree == null) return null;
+    XmlElement? byType;
+
+    for (final sp in spTree.children_('sp')) {
+      final ph = sp.child('nvSpPr')?.child('nvPr')?.child('ph');
+      if (ph == null) continue;
+      final idx = ph.attr('idx') ?? '0';
+      final type = (ph.attr('type') ?? '').toLowerCase();
+      if ((placeholderIdx ?? '').isNotEmpty && idx == placeholderIdx) {
+        return sp;
+      }
+      if ((placeholderType ?? '').toLowerCase() == type && byType == null) {
+        byType = sp;
+      }
+    }
+    return byType;
+  }
+
+  TextBodyProperties _resolveBodyProps(
+    XmlElement? localBodyPr, {
+    required String? placeholderType,
+    required String? placeholderIdx,
+    required _TextStyleContext? context,
+  }) {
+    var resolved = TextBodyProperties.defaults;
+
+    if (context != null) {
+      final masterShape = _findPlaceholderShape(
+        context.masterSpTree,
+        placeholderType: placeholderType,
+        placeholderIdx: placeholderIdx,
+      );
+      resolved = _parseBodyPr(
+        masterShape?.child('txBody')?.child('bodyPr'),
+        inherit: resolved,
+      );
+
+      final layoutShape = _findPlaceholderShape(
+        context.layoutSpTree,
+        placeholderType: placeholderType,
+        placeholderIdx: placeholderIdx,
+      );
+      resolved = _parseBodyPr(
+        layoutShape?.child('txBody')?.child('bodyPr'),
+        inherit: resolved,
+      );
+    }
+
+    resolved = _parseBodyPr(localBodyPr, inherit: resolved);
+    return resolved;
+  }
+
+  TextBodyProperties _parseBodyPr(
+    XmlElement? bodyPr, {
+    TextBodyProperties? inherit,
+  }) {
+    final base = inherit ?? TextBodyProperties.defaults;
+    if (bodyPr == null) return base;
+
+    var vertAlign = base.vertAlign;
+    final anchor = bodyPr.attr('anchor');
+    if (anchor != null) {
+      switch (anchor) {
+        case 'ctr':
+          vertAlign = VerticalAlignment.middle;
+        case 'b':
+          vertAlign = VerticalAlignment.bottom;
+        default:
+          vertAlign = VerticalAlignment.top;
+      }
+    }
+
+    final wrap = bodyPr.attr('wrap');
+    final wordWrap = wrap == null ? base.wordWrap : wrap != 'none';
+
+    final insetLeft = bodyPr.attr('lIns') != null
+        ? (double.tryParse(bodyPr.attr('lIns') ?? '') ?? base.insetLeftEmu)
+        : base.insetLeftEmu;
+    final insetRight = bodyPr.attr('rIns') != null
+        ? (double.tryParse(bodyPr.attr('rIns') ?? '') ?? base.insetRightEmu)
+        : base.insetRightEmu;
+    final insetTop = bodyPr.attr('tIns') != null
+        ? (double.tryParse(bodyPr.attr('tIns') ?? '') ?? base.insetTopEmu)
+        : base.insetTopEmu;
+    final insetBottom = bodyPr.attr('bIns') != null
+        ? (double.tryParse(bodyPr.attr('bIns') ?? '') ?? base.insetBottomEmu)
+        : base.insetBottomEmu;
+
+    var fontScale = base.fontScale;
+    var lineSpaceReduction = base.lineSpaceReduction;
     final normAutofit = bodyPr.child('normAutofit');
     if (normAutofit != null) {
       final fs = int.tryParse(normAutofit.attr('fontScale') ?? '');
@@ -1278,4 +1619,28 @@ class PptxParser {
       lineSpaceReduction: lineSpaceReduction,
     );
   }
+}
+
+class _TextStyleContext {
+  final ColorResolver colorResolver;
+  final XmlElement? masterTxStyles;
+  final XmlElement? masterSpTree;
+  final XmlElement? layoutSpTree;
+
+  const _TextStyleContext({
+    required this.colorResolver,
+    this.masterTxStyles,
+    this.masterSpTree,
+    this.layoutSpTree,
+  });
+}
+
+class _ResolvedTextDefaults {
+  final Map<int, ParagraphProperties> paragraphByLevel;
+  final Map<int, RunProperties> runByLevel;
+
+  const _ResolvedTextDefaults({
+    required this.paragraphByLevel,
+    required this.runByLevel,
+  });
 }

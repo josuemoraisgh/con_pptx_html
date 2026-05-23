@@ -26,6 +26,10 @@ void requestFullscreen() {}
 
 void exitFullscreen() {}
 
+void saveViewerState(int slideIndex, int animStep) {}
+
+({int slideIndex, int animStep})? loadViewerState() => null;
+
 Future<bool> ensurePyodideReady() async => false;
 
 Future<String> runPythonCode(String code) async =>

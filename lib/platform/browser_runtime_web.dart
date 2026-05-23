@@ -103,6 +103,26 @@ void exitFullscreen() {
   } catch (_) {}
 }
 
+void saveViewerState(int slideIndex, int animStep) {
+  try {
+    final storage = web.window.sessionStorage;
+    storage.setItem('viewer.slideIndex', '$slideIndex');
+    storage.setItem('viewer.animStep', '$animStep');
+  } catch (_) {}
+}
+
+({int slideIndex, int animStep})? loadViewerState() {
+  try {
+    final storage = web.window.sessionStorage;
+    final i = int.tryParse(storage.getItem('viewer.slideIndex') ?? '');
+    final s = int.tryParse(storage.getItem('viewer.animStep') ?? '');
+    if (i == null || s == null) return null;
+    return (slideIndex: i, animStep: s);
+  } catch (_) {
+    return null;
+  }
+}
+
 @JS('__copilotEnsurePyodide')
 external JSPromise<JSAny?> _ensurePyodideJs();
 

@@ -64,11 +64,15 @@ class _PresentationViewerState extends State<PresentationViewer> {
   void initState() {
     super.initState();
     final maxIndex = widget.presentation.slides.length - 1;
-    _currentIndex = widget.initialSlide.clamp(0, maxIndex);
+    final persisted = browser.loadViewerState();
+    final startIndex = persisted?.slideIndex ?? widget.initialSlide;
+    _currentIndex = startIndex.clamp(0, maxIndex);
+    _animStep = persisted?.animStep ?? 0;
     _pageController = PageController(initialPage: _currentIndex);
     _preloadFonts();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
+      _restoreSlidePosition(_currentIndex, _animStep);
     });
   }
 
@@ -327,7 +331,24 @@ class _PresentationViewerState extends State<PresentationViewer> {
   }
 
   void _sendState() {
+    browser.saveViewerState(_currentIndex, _animStep);
     _channel?.sendState(_currentIndex, _animStep);
+  }
+
+  void _restoreSlidePosition(int index, int step) {
+    final total = widget.presentation.slides.length;
+    final safeIndex = index.clamp(0, total - 1);
+    if (!mounted) return;
+
+    setState(() {
+      _currentIndex = safeIndex;
+      _animStep = step;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pageController.hasClients) return;
+      _pageController.jumpToPage(safeIndex);
+    });
   }
 
   void _onChannelMessage(PresenterMessage msg) {
@@ -518,19 +539,21 @@ class _PresentationViewerState extends State<PresentationViewer> {
           tooltip: 'Painel de miniaturas',
           onPressed: () => setState(() => _showThumbnails = !_showThumbnails),
         ),
-        // Botão modo apresentador (ativa apenas com 2 monitores)
+        // Botão tela cheia (F5)
         IconButton(
+          icon: const Icon(Icons.fullscreen, color: Colors.white70),
+          tooltip: 'Tela cheia (F5)',
+          onPressed: _enterFullScreen,
+        ),
+        // Botão modo apresentador: visível apenas quando há 2 monitores
+        if (PresenterChannel.hasMultipleScreens)
+          IconButton(
           icon: const Icon(
             Icons.present_to_all_outlined,
             color: Colors.white70,
           ),
           tooltip: 'Modo apresentador (requer 2 monitores)',
           onPressed: _enterPresenterMode,
-        ),
-        IconButton(
-          icon: const Icon(Icons.fullscreen, color: Colors.white70),
-          tooltip: 'Tela cheia (F5)',
-          onPressed: _enterFullScreen,
         ),
       ],
     );
@@ -696,14 +719,6 @@ class _PresentationViewerState extends State<PresentationViewer> {
           ),
         ),
 
-        // Indicador de progresso
-        Positioned(
-          bottom: 12,
-          left: 0,
-          right: 0,
-          child: _buildProgressIndicator(pres.slides.length),
-        ),
-
         // Botão sair tela cheia
         if (_isFullScreen)
           Positioned(
@@ -724,43 +739,26 @@ class _PresentationViewerState extends State<PresentationViewer> {
   Set<int>? _buildVisibleIds(SlideData slide, int step) =>
       _isPresenterMode ? buildVisibleShapeIds(slide, step) : null;
 
-  Widget _buildProgressIndicator(int total) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(total > 30 ? 1 : total, (i) {
-        if (total > 30) {
-          return Text(
-            '${_currentIndex + 1} / $total',
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-          );
-        }
-        return Container(
-          width: 6,
-          height: 6,
-          margin: const EdgeInsets.symmetric(horizontal: 3),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: i == _currentIndex
-                ? const Color(0xFF7C6AF7)
-                : Colors.white24,
-          ),
-        );
-      }),
-    );
-  }
-
   // ── Tela cheia ────────────────────────────────────────────────────────────
 
   void _enterFullScreen() {
+    final keepIndex = _currentIndex;
+    final keepStep = _animStep;
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     browser.requestFullscreen();
     setState(() => _isFullScreen = true);
+    _restoreSlidePosition(keepIndex, keepStep);
+    _sendState();
   }
 
   void _exitFullScreen() {
+    final keepIndex = _currentIndex;
+    final keepStep = _animStep;
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     browser.exitFullscreen();
     setState(() => _isFullScreen = false);
+    _restoreSlidePosition(keepIndex, keepStep);
+    _sendState();
   }
 
   // ── Teclado ───────────────────────────────────────────────────────────────
