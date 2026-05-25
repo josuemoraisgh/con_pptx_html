@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'app.dart';
-import 'models/pptx_models.dart';
-import 'parsers/pptx_parser.dart';
+import 'generated/presentation_data.g.dart';
 import 'platform/browser_runtime.dart' as browser;
 import 'screens/audience_screen.dart';
 import 'screens/raw_slide_screen.dart';
@@ -21,98 +19,59 @@ class _BootstrapApp extends StatefulWidget {
 }
 
 class _BootstrapAppState extends State<_BootstrapApp> {
-  PresentationData? _presentation;
-  String? _parseError;
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadPresentation();
-  }
-
-  Future<void> _loadPresentation() async {
-    PresentationData? presentation;
-    String? parseError;
-    try {
-      final data = await rootBundle.load('assets/presentation.pptx');
-      presentation = PptxParser().parse(data.buffer.asUint8List());
-    } catch (e, st) {
-      parseError = '$e\n$st';
-      debugPrint('PPTX parse error: $e\n$st');
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _presentation = presentation;
-      _parseError = parseError;
-      _loading = false;
+    // Dados compilados no WASM durante o build — carregamento síncrono.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _loading = false);
     });
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return MaterialApp(
-        title: 'PPTX -> Web',
+      return const MaterialApp(
+        title: 'PPTX → Web',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData.dark(),
-        home: const Scaffold(
-          backgroundColor: Color(0xFF0F0F1A),
+        home: Scaffold(
+          backgroundColor: Color(0xFF040D18),
           body: Center(
-            child: CircularProgressIndicator(color: Color(0xFF7C6AF7)),
+            child: CircularProgressIndicator(color: Color(0xFF00BCD4)),
           ),
         ),
       );
     }
 
-    final presentation = _presentation;
-    final isAudience = browser.isAudienceView;
-    final isRaw = browser.isRawView;
+    final presentation = kGeneratedPresentation;
     final hasSlides = presentation?.slides.isNotEmpty ?? false;
 
-    if (isRaw && presentation != null && hasSlides) {
-      return _RawSlideApp(
-        presentation: presentation,
-        slideIndex: browser.rawSlideIndex,
+    if (browser.isRawView && presentation != null && hasSlides) {
+      return MaterialApp(
+        title: 'Raw Slide',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData.dark(),
+        home: RawSlideScreen(
+          presentation: presentation,
+          slideIndex: browser.rawSlideIndex,
+        ),
       );
     }
 
-    return isAudience && presentation != null && hasSlides
-        ? _AudienceApp(presentation: presentation)
-        : ConPptxHtmlApp(presentation: presentation, parseError: _parseError);
-  }
-}
+    if (browser.isAudienceView && presentation != null && hasSlides) {
+      return MaterialApp(
+        title: 'Apresentação - Plateia',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData.dark(),
+        home: AudienceScreen(presentation: presentation),
+      );
+    }
 
-class _RawSlideApp extends StatelessWidget {
-  final PresentationData presentation;
-  final int slideIndex;
-
-  const _RawSlideApp({required this.presentation, required this.slideIndex});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Raw Slide',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
-      home: RawSlideScreen(presentation: presentation, slideIndex: slideIndex),
-    );
-  }
-}
-
-class _AudienceApp extends StatelessWidget {
-  final PresentationData presentation;
-
-  const _AudienceApp({required this.presentation});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Apresentacao - Plateia',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
-      home: AudienceScreen(presentation: presentation),
+    return ConPptxHtmlApp(
+      presentation: presentation,
+      parseError: null,
     );
   }
 }

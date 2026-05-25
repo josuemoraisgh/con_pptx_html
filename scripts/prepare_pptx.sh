@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prepare_pptx.sh - Copia um .pptx para assets/presentation.pptx e compila
+# prepare_pptx.sh - Copia um .pptx para assets/presentation.pptx e regenera o Dart
 #
 # Uso:
 #   chmod +x scripts/prepare_pptx.sh
@@ -77,10 +77,14 @@ echo "   $DESTINATION"
 cp "$PPTX_PATH" "$DESTINATION"
 echo "  OK: $(du -k "$DESTINATION" | cut -f1) KB copiados"
 
+echo ""
+echo "-> Gerando lib/generated/presentation_data.g.dart"
+cd "$PROJECT_ROOT"
+PPTX_INPUT="assets/presentation.pptx" flutter test tool/compile_pptx.dart
+
 if $DO_BUILD; then
   echo ""
   echo "-> Compilando: flutter build web --wasm --base-href $BASE_HREF --release"
-  cd "$PROJECT_ROOT"
   flutter build web --wasm --base-href "$BASE_HREF" --release
   echo ""
   echo "OK: Build concluido! Pasta pronta para publicar: build/web/"
@@ -89,7 +93,7 @@ if $DO_BUILD; then
   echo "    cd build/web && python3 -m http.server 8080"
 else
   echo ""
-  echo "OK: Asset atualizado. Para compilar:"
+  echo "OK: PPTX compilado para Dart. Para gerar build/web:"
   echo "    flutter build web --wasm --base-href $BASE_HREF --release"
   echo "  Ou: $0 $PPTX_PATH --build"
 fi

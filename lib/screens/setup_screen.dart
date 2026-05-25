@@ -25,19 +25,14 @@ class SetupScreen extends StatelessWidget {
                   _StepsCard(),
                   const SizedBox(height: 32),
                   _CommandBox(
-                    label: 'Windows (PowerShell)',
-                    command:
-                        r'.\scripts\prepare_pptx.ps1 -PptxPath "sua_aula.pptx" -Build',
-                  ),
-                  const SizedBox(height: 16),
-                  _CommandBox(
-                    label: 'Linux / macOS (bash)',
-                    command:
-                        'bash scripts/prepare_pptx.sh "sua_aula.pptx" --build',
+                    label: 'Compilar e gerar o site (único comando)',
+                    command: 'dart run tool/build_web.dart',
                   ),
                   const SizedBox(height: 32),
                   const Text(
-                    'Após a compilação, o site gerado em build/web/ contém seus slides\npronto para hospedar no GitHub Pages — sem servidor, sem runtime.',
+                    'O PPTX é compilado e os dados ficam embutidos diretamente no WASM.\n'
+                    'A pasta build/web/ não contém o arquivo .pptx —\n'
+                    'basta publicar essa pasta no GitHub Pages.',
                     style: TextStyle(
                       color: Colors.white38,
                       fontSize: 13,
@@ -130,12 +125,18 @@ class _StepsCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          _Step(n: 1, text: 'Copie seu arquivo .pptx para a pasta do projeto'),
-          _Step(n: 2, text: 'Execute o script de preparação (abaixo)'),
+          _Step(
+            n: 1,
+            text: 'Copie seu .pptx para a pasta assets/ com o nome presentation.pptx',
+          ),
+          _Step(
+            n: 2,
+            text: 'Execute o comando abaixo — ele compila o PPTX e gera o site em build/web/',
+          ),
           _Step(
             n: 3,
             text:
-                'O script copia o .pptx para assets/ e chama flutter build web --wasm',
+                'Os dados ficam embutidos no WASM; o site funciona sem o arquivo .pptx',
           ),
           _Step(
             n: 4,

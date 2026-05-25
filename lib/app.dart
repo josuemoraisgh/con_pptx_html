@@ -74,12 +74,14 @@ class ConPptxHtmlApp extends StatelessWidget {
       title: 'PPTX → Web',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF7C6AF7),
-          brightness: Brightness.dark,
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF00BCD4),
+          secondary: Color(0xFF007AFF),
+          surface: Color(0xFF0A1628),
+          onSurface: Colors.white,
         ),
         textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
-        scaffoldBackgroundColor: const Color(0xFF0F0F1A),
+        scaffoldBackgroundColor: Colors.black,
       ),
       home: presentation != null && !emptyPresentation
           ? PresentationViewer(presentation: presentation!)

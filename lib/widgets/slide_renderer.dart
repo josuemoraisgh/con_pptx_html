@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -612,40 +613,24 @@ class SlideRenderer extends StatelessWidget {
       return _PyodideCommandOverlay(layout: layout);
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        color: Colors.black,
-        padding: const EdgeInsets.all(16),
-        child: Scrollbar(
-          thumbVisibility: true,
-          notificationPredicate: (notification) => notification.depth == 0,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.vertical,
-            child: Text.rich(
-              TextSpan(
-                children: switch (spec.command) {
-                  _AltCommand.arduino => _highlightArduinoCode(spec.content),
-                  _AltCommand.pyodideWorkspace => const [TextSpan(text: '')],
-                  _AltCommand.pyodideCode => const [TextSpan(text: '')],
-                  _AltCommand.pyodideRun => const [TextSpan(text: '')],
-                  _AltCommand.pyodideAnswer => const [TextSpan(text: '')],
-                },
-              ),
-              style: const TextStyle(
-                fontSize: 20,
-                fontFamily: 'Consolas',
-                fontFamilyFallback: ['Courier New', 'monospace'],
-                height: 1.35,
-                color: Color(0xFFD4D4D4),
-              ),
-              textAlign: TextAlign.start,
-              softWrap: true,
-              overflow: TextOverflow.visible,
-            ),
-          ),
-        ),
-      ),
+    final spans = spec.command == _AltCommand.arduino
+        ? _highlightArduinoCode(spec.content)
+        : <InlineSpan>[TextSpan(text: spec.content)];
+
+    final icon = spec.command == _AltCommand.arduino
+        ? Icons.developer_board
+        : Icons.code_rounded;
+    final label = spec.command == _AltCommand.arduino ? 'ARDUINO' : 'CÓDIGO';
+    final color = spec.command == _AltCommand.arduino
+        ? const Color(0xFFFF9500)
+        : const Color(0xFF00C7FF);
+
+    return _CodeDisplayWidget(
+      spans: spans,
+      rawText: spec.content,
+      label: label,
+      icon: icon,
+      color: color,
     );
   }
 
@@ -1338,22 +1323,27 @@ class _PyodideCommandOverlay extends StatefulWidget {
 
 class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
   late final _PythonHighlightEditingController _codeController;
-  late final ScrollController _codeScrollController;
   late final ScrollController _outputScrollController;
-  late String _output;
+  late final TransformationController _zoomCtrl;
+  late final OverlayPortalController _editorFsCtrl;
+  late final OverlayPortalController _outputFsCtrl;
+
+  String _textOutput = '';
+  List<String> _plotImages = [];
   bool _loadingRuntime = true;
   bool _runtimeReady = false;
   bool _running = false;
+  bool _hasError = false;
 
   @override
   void initState() {
     super.initState();
-    _codeController = _PythonHighlightEditingController(
-      widget.layout.initialCode,
-    );
-    _codeScrollController = ScrollController();
+    _codeController = _PythonHighlightEditingController(widget.layout.initialCode);
     _outputScrollController = ScrollController();
-    _output = widget.layout.initialOutput;
+    _zoomCtrl = TransformationController();
+    _editorFsCtrl = OverlayPortalController();
+    _outputFsCtrl = OverlayPortalController();
+    _textOutput = widget.layout.initialOutput;
     _prepareRuntime();
   }
 
@@ -1363,28 +1353,54 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
     setState(() {
       _runtimeReady = ready;
       _loadingRuntime = false;
-      if (!ready && _output.trim().isEmpty) {
-        _output = 'Pyodide indisponivel neste ambiente.';
+      if (!ready && _textOutput.trim().isEmpty) {
+        _textOutput = 'Pyodide indisponível neste ambiente.';
       }
     });
   }
 
   Future<void> _runCode() async {
     if (_running) return;
-    setState(() => _running = true);
+    setState(() {
+      _running = true;
+      _hasError = false;
+      _plotImages = [];
+      _textOutput = '';
+    });
     final result = await browser.runPythonCode(_codeController.text);
     if (!mounted) return;
+    _parseResult(result);
+  }
+
+  void _parseResult(String raw) {
+    const plotMarker = '__PLOT_DATA__\n';
+    String text;
+    List<String> plots;
+    if (raw.contains(plotMarker)) {
+      final idx = raw.indexOf(plotMarker);
+      text = raw.substring(0, idx).trim();
+      final plotsRaw = raw.substring(idx + plotMarker.length);
+      plots = plotsRaw.split('|||').where((s) => s.trim().isNotEmpty).toList();
+    } else {
+      text = raw;
+      plots = [];
+    }
+    final hasErr = text.contains('[Exceção Python]') ||
+        text.contains('Erro interno:') ||
+        text.contains('Erro ao executar Python:');
     setState(() {
       _running = false;
-      _output = result;
+      _textOutput = text;
+      _plotImages = plots;
+      _hasError = hasErr;
     });
   }
 
   @override
   void dispose() {
     _codeController.dispose();
-    _codeScrollController.dispose();
     _outputScrollController.dispose();
+    _zoomCtrl.dispose();
     super.dispose();
   }
 
@@ -1393,263 +1409,509 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
     final layout = widget.layout;
     final group = layout.groupBounds;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = Size(constraints.maxWidth, constraints.maxHeight);
-        final codeRect = _relativeRect(layout.codeBounds, group, size);
-        final answerRect = layout.answerBounds == null
-            ? null
-            : _relativeRect(layout.answerBounds!, group, size);
+    return OverlayPortal(
+      controller: _editorFsCtrl,
+      overlayChildBuilder: (_) => _buildEditorFull(),
+      child: OverlayPortal(
+        controller: _outputFsCtrl,
+        overlayChildBuilder: (_) => _buildOutputFull(),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final size = Size(constraints.maxWidth, constraints.maxHeight);
+            final s = (size.height / 420.0).clamp(0.4, 3.0);
+            final codeRect = _relativeRect(layout.codeBounds, group, size);
+            final answerRect = layout.answerBounds == null
+                ? null
+                : _relativeRect(layout.answerBounds!, group, size);
 
-        return Stack(
-          clipBehavior: Clip.hardEdge,
-          children: [
-            Positioned.fromRect(rect: codeRect, child: _buildCodeEditor()),
-            if (answerRect != null)
-              Positioned.fromRect(rect: answerRect, child: _buildOutputPanel()),
-          ],
-        );
-      },
+            return Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
+                Positioned.fromRect(rect: codeRect, child: _buildEditorPanel(s)),
+                if (answerRect != null)
+                  Positioned.fromRect(rect: answerRect, child: _buildOutputPanel(s)),
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 
   Rect _relativeRect(_OverlayBounds target, _OverlayBounds root, Size size) {
     final rootW = root.cxEmu <= 0 ? 1.0 : root.cxEmu;
     final rootH = root.cyEmu <= 0 ? 1.0 : root.cyEmu;
-
-    final left = ((target.xEmu - root.xEmu) / rootW * size.width).clamp(
-      0.0,
-      size.width,
-    );
-    final top = ((target.yEmu - root.yEmu) / rootH * size.height).clamp(
-      0.0,
-      size.height,
-    );
+    final left = ((target.xEmu - root.xEmu) / rootW * size.width).clamp(0.0, size.width);
+    final top = ((target.yEmu - root.yEmu) / rootH * size.height).clamp(0.0, size.height);
     final width = (target.cxEmu / rootW * size.width).clamp(0.0, size.width);
     final height = (target.cyEmu / rootH * size.height).clamp(0.0, size.height);
     return Rect.fromLTWH(left, top, width, height);
   }
 
-  Widget _buildCodeEditor() {
+  // ── Editor panel ──────────────────────────────────────────────────────────
+
+  Widget _buildEditorPanel(double s) {
+    const color = Color(0xFF00C7FF);
     return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF102834), Color(0xFF1B2C33)],
-          ),
-          border: Border.all(color: const Color(0xFF0F4C66), width: 1.2),
-        ),
-        child: Column(
-          children: [
-            Container(
-              height: 52,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(color: Color(0xFF214A5D), width: 1),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.code, color: Color(0xFF00C8FF), size: 18),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'CODIGO PYTHON',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.1,
-                        color: Color(0xFF00C8FF),
-                      ),
-                    ),
-                  ),
-                  _headerIconButton(
-                    icon: Icons.content_copy,
-                    tooltip: 'Copiar codigo',
-                    onTap: _copyCode,
-                  ),
-                  const SizedBox(width: 4),
-                  _headerIconButton(
-                    icon: Icons.fullscreen,
-                    tooltip: 'Tela cheia',
-                    onTap: _enterFullscreen,
-                  ),
-                ],
-              ),
+      borderRadius: BorderRadius.circular(12 * s),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(color: const Color(0xFF0E1621)),
+          CustomPaint(painter: _DotGrid()),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: color.withAlpha(77), width: 1.0),
+              borderRadius: BorderRadius.circular(12 * s),
             ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF15181E),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Scrollbar(
-                    thumbVisibility: true,
-                    controller: _codeScrollController,
+            child: Column(
+              children: [
+                _panelHeader(
+                  icon: Icons.code_rounded,
+                  label: 'CÓDIGO PYTHON',
+                  color: color,
+                  s: s,
+                  actions: [
+                    _headerBtn(icon: Icons.content_copy_rounded, tooltip: 'Copiar', color: color, s: s, onTap: _copyCode),
+                    SizedBox(width: 4 * s),
+                    _headerBtn(
+                      icon: Icons.open_in_full_rounded,
+                      tooltip: 'Expandir',
+                      color: color,
+                      s: s,
+                      onTap: _editorFsCtrl.show,
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: Container(
+                    color: const Color(0xFF1E1E1E),
                     child: TextField(
                       controller: _codeController,
-                      scrollController: _codeScrollController,
-                      readOnly: false,
-                      enableInteractiveSelection: true,
                       keyboardType: TextInputType.multiline,
                       textInputAction: TextInputAction.newline,
                       expands: true,
                       maxLines: null,
                       minLines: null,
                       cursorColor: const Color(0xFF00E5FF),
-                      style: const TextStyle(
-                        fontSize: 20,
+                      style: TextStyle(
+                        fontSize: 12.0 * s,
                         fontFamily: 'Consolas',
-                        fontFamilyFallback: ['Courier New', 'monospace'],
-                        height: 1.35,
-                        color: Color(0xFFD4D4D4),
+                        fontFamilyFallback: const ['Courier New', 'monospace'],
+                        height: 1.45,
+                        color: const Color(0xFFD4D4D4),
                       ),
-                      decoration: const InputDecoration.collapsed(hintText: ''),
+                      decoration: InputDecoration(
+                        contentPadding: EdgeInsets.all(10 * s),
+                        border: InputBorder.none,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-              child: _buildRunButton(),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _headerIconButton({
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onTap,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: SizedBox(
-          width: 30,
-          height: 30,
-          child: Icon(icon, color: const Color(0xFF8EA4AD), size: 18),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _copyCode() async {
-    await Clipboard.setData(ClipboardData(text: _codeController.text));
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Codigo copiado.')));
-  }
-
-  void _enterFullscreen() {
-    browser.requestFullscreen();
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Modo tela cheia ativado.')));
-  }
-
-  Widget _buildRunButton() {
-    final enabled = !(_loadingRuntime || !_runtimeReady || _running);
-    return SizedBox(
-      height: 56,
-      width: double.infinity,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Material(
-          color: enabled ? const Color(0xFF1F5533) : const Color(0xFF32453A),
-          child: InkWell(
-            onTap: enabled ? _runCode : null,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.play_arrow,
-                  color: enabled
-                      ? const Color(0xFF25E26C)
-                      : const Color(0xFF89A893),
-                  size: 24,
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  _running ? 'Executando...' : widget.layout.runLabel,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
-                    color: enabled
-                        ? const Color(0xFF25E26C)
-                        : const Color(0xFF89A893),
-                  ),
+                Padding(
+                  padding: EdgeInsets.all(6 * s),
+                  child: _buildRunButton(s),
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Output panel ──────────────────────────────────────────────────────────
+
+  Widget _buildOutputPanel(double s) {
+    final Color borderColor;
+    final Color headerColor;
+    if (_loadingRuntime) {
+      borderColor = Colors.white.withAlpha(20);
+      headerColor = Colors.white.withAlpha(100);
+    } else if (_hasError) {
+      borderColor = const Color(0xFFFF3B30).withAlpha(100);
+      headerColor = const Color(0xFFFF3B30);
+    } else if (_plotImages.isNotEmpty || (_textOutput.isNotEmpty && _textOutput != widget.layout.initialOutput)) {
+      borderColor = const Color(0xFF30D158).withAlpha(80);
+      headerColor = const Color(0xFF30D158);
+    } else {
+      borderColor = Colors.white.withAlpha(20);
+      headerColor = Colors.white.withAlpha(120);
+    }
+
+    final title = _loadingRuntime
+        ? 'INICIALIZANDO...'
+        : _runtimeReady
+        ? 'SAÍDA'
+        : 'SAÍDA (INDISPONÍVEL)';
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12 * s),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(color: const Color(0xFF060E18)),
+          CustomPaint(painter: _DotGrid()),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: borderColor, width: 0.8),
+              borderRadius: BorderRadius.circular(12 * s),
+            ),
+            child: Column(
+              children: [
+                _panelHeader(
+                  icon: Icons.terminal_rounded,
+                  label: title,
+                  color: headerColor,
+                  s: s,
+                  actions: [
+                    if (_plotImages.isNotEmpty) ...[
+                      _headerBtn(icon: Icons.zoom_in_rounded, tooltip: 'Zoom +', color: headerColor, s: s, onTap: _zoomIn),
+                      SizedBox(width: 2 * s),
+                      _headerBtn(icon: Icons.zoom_out_rounded, tooltip: 'Zoom -', color: headerColor, s: s, onTap: _zoomOut),
+                      SizedBox(width: 2 * s),
+                      _headerBtn(icon: Icons.zoom_out_map_rounded, tooltip: 'Resetar zoom', color: headerColor, s: s, onTap: _zoomReset),
+                      SizedBox(width: 4 * s),
+                    ],
+                    _headerBtn(
+                      icon: Icons.open_in_full_rounded,
+                      tooltip: 'Expandir',
+                      color: headerColor,
+                      s: s,
+                      onTap: _outputFsCtrl.show,
+                    ),
+                  ],
+                ),
+                Expanded(child: _buildOutputContent(s, headerColor)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOutputContent(double s, Color color) {
+    if (_plotImages.isNotEmpty) {
+      return InteractiveViewer(
+        transformationController: _zoomCtrl,
+        minScale: 0.1,
+        maxScale: 8.0,
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(8 * s),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_textOutput.isNotEmpty)
+                Padding(
+                  padding: EdgeInsets.only(bottom: 8 * s),
+                  child: SelectableText(
+                    _textOutput,
+                    style: TextStyle(
+                      fontSize: 10 * s,
+                      fontFamily: 'Consolas',
+                      fontFamilyFallback: const ['Courier New', 'monospace'],
+                      height: 1.4,
+                      color: const Color(0xFFD4D4D4),
+                    ),
+                  ),
+                ),
+              for (final plot in _plotImages)
+                Padding(
+                  padding: EdgeInsets.only(bottom: 4 * s),
+                  child: Image.memory(
+                    base64Decode(plot),
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, a, e) => Text(
+                      '[Erro ao carregar imagem]',
+                      style: TextStyle(color: Colors.red, fontSize: 10 * s),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scrollbar(
+      controller: _outputScrollController,
+      child: SingleChildScrollView(
+        controller: _outputScrollController,
+        padding: EdgeInsets.all(10 * s),
+        child: SelectableText(
+          _textOutput,
+          style: TextStyle(
+            fontSize: 10 * s,
+            fontFamily: 'Consolas',
+            fontFamilyFallback: const ['Courier New', 'monospace'],
+            height: 1.45,
+            color: const Color(0xFFD4D4D4),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildOutputPanel() {
-    final title = _loadingRuntime
-        ? 'Inicializando Pyodide...'
-        : (_runtimeReady ? 'Saida' : 'Saida (indisponivel)');
+  // ── Fullscreen overlays (OverlayPortal — cobertura total da tela) ────────
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        color: Colors.black,
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildEditorFull() {
+    const color = Color(0xFF00C7FF);
+    const s = 2.0;
+    return Material(
+      color: const Color(0xFF0E1621),
+      child: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF62EFA0),
-                ),
+            CustomPaint(painter: _DotGrid()),
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: color.withAlpha(60), width: 0.8),
               ),
-            ),
-            Expanded(
-              child: Scrollbar(
-                thumbVisibility: true,
-                controller: _outputScrollController,
-                child: SingleChildScrollView(
-                  controller: _outputScrollController,
-                  child: SelectableText(
-                    _output,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontFamily: 'Consolas',
-                      fontFamilyFallback: ['Courier New', 'monospace'],
-                      height: 1.35,
-                      color: Color(0xFFD4D4D4),
+              child: Column(
+                children: [
+                  _panelHeader(
+                    icon: Icons.code_rounded,
+                    label: 'CÓDIGO PYTHON',
+                    color: color,
+                    s: s,
+                    actions: [
+                      _headerBtn(icon: Icons.content_copy_rounded, tooltip: 'Copiar', color: color, s: s, onTap: _copyCode),
+                      SizedBox(width: 4 * s),
+                      _headerBtn(
+                        icon: Icons.close_fullscreen_rounded,
+                        tooltip: 'Fechar',
+                        color: color,
+                        s: s,
+                        onTap: _editorFsCtrl.hide,
+                      ),
+                    ],
+                  ),
+                  Expanded(
+                    child: Container(
+                      color: const Color(0xFF1E1E1E),
+                      child: TextField(
+                        controller: _codeController,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        expands: true,
+                        maxLines: null,
+                        minLines: null,
+                        cursorColor: const Color(0xFF00E5FF),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontFamily: 'Consolas',
+                          fontFamilyFallback: ['Courier New', 'monospace'],
+                          height: 1.5,
+                          color: Color(0xFFD4D4D4),
+                        ),
+                        decoration: const InputDecoration(
+                          contentPadding: EdgeInsets.all(16),
+                          border: InputBorder.none,
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                  Container(
+                    color: const Color(0xFF0E1621),
+                    padding: const EdgeInsets.all(12),
+                    child: _buildRunButton(s),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildOutputFull() {
+    final color = _hasError ? const Color(0xFFFF3B30) : const Color(0xFF30D158);
+    const s = 2.0;
+    final title = _runtimeReady ? 'SAÍDA' : 'SAÍDA (INDISPONÍVEL)';
+    return Material(
+      color: const Color(0xFF060E18),
+      child: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CustomPaint(painter: _DotGrid()),
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: color.withAlpha(60), width: 0.8),
+              ),
+              child: Column(
+                children: [
+                  _panelHeader(
+                    icon: Icons.terminal_rounded,
+                    label: title,
+                    color: color,
+                    s: s,
+                    actions: [
+                      if (_plotImages.isNotEmpty) ...[
+                        _headerBtn(icon: Icons.zoom_in_rounded, tooltip: 'Zoom +', color: color, s: s, onTap: _zoomIn),
+                        SizedBox(width: 2 * s),
+                        _headerBtn(icon: Icons.zoom_out_rounded, tooltip: 'Zoom -', color: color, s: s, onTap: _zoomOut),
+                        SizedBox(width: 2 * s),
+                        _headerBtn(icon: Icons.zoom_out_map_rounded, tooltip: 'Reset', color: color, s: s, onTap: _zoomReset),
+                        SizedBox(width: 4 * s),
+                      ],
+                      _headerBtn(
+                        icon: Icons.close_fullscreen_rounded,
+                        tooltip: 'Fechar',
+                        color: color,
+                        s: s,
+                        onTap: _outputFsCtrl.hide,
+                      ),
+                    ],
+                  ),
+                  Expanded(child: _buildOutputContent(s, color)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Shared helpers ────────────────────────────────────────────────────────
+
+  Widget _panelHeader({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required double s,
+    List<Widget> actions = const [],
+  }) {
+    return Container(
+      height: 30 * s,
+      padding: EdgeInsets.symmetric(horizontal: 10 * s),
+      decoration: BoxDecoration(
+        color: color.withAlpha(18),
+        border: Border(bottom: BorderSide(color: color.withAlpha(46), width: 0.8)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 11 * s),
+          SizedBox(width: 6 * s),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 8.5 * s,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.4,
+              ),
+            ),
+          ),
+          ...actions,
+        ],
+      ),
+    );
+  }
+
+  Widget _headerBtn({
+    required IconData icon,
+    required String tooltip,
+    required Color color,
+    required double s,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6 * s),
+        onTap: onTap,
+        child: SizedBox(
+          width: 20 * s,
+          height: 20 * s,
+          child: Icon(icon, color: color.withAlpha(180), size: 11 * s),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRunButton(double s) {
+    final Color bg, fg;
+    final String label;
+    final Widget leading;
+
+    if (_loadingRuntime) {
+      bg = const Color(0xFF111C11);
+      fg = const Color(0xFF4A6A4A);
+      label = 'Carregando Pyodide...';
+      leading = Icon(Icons.hourglass_empty_rounded, color: fg, size: 13 * s);
+    } else if (_running) {
+      bg = const Color(0xFF1C1C11);
+      fg = const Color(0xFFFFCC00);
+      label = 'Executando...';
+      leading = SizedBox(
+        width: 13 * s,
+        height: 13 * s,
+        child: CircularProgressIndicator(color: fg, strokeWidth: 1.5),
+      );
+    } else {
+      bg = const Color(0xFF0A2116);
+      fg = const Color(0xFF30D158);
+      label = widget.layout.runLabel;
+      leading = Icon(Icons.play_arrow_rounded, color: fg, size: 15 * s);
+    }
+
+    final isReady = !_loadingRuntime && _runtimeReady && !_running;
+    return SizedBox(
+      height: 34 * s,
+      width: double.infinity,
+      child: InkWell(
+        onTap: isReady ? _runCode : null,
+        borderRadius: BorderRadius.circular(8 * s),
+        child: Container(
+          decoration: BoxDecoration(
+            color: bg,
+            border: Border.all(color: fg.withAlpha(80), width: 0.8),
+            borderRadius: BorderRadius.circular(8 * s),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              leading,
+              SizedBox(width: 7 * s),
+              Text(
+                label,
+                style: TextStyle(fontSize: 11 * s, fontWeight: FontWeight.w700, color: fg, letterSpacing: 0.5),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  Future<void> _copyCode() async {
+    await Clipboard.setData(ClipboardData(text: _codeController.text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Código copiado.'), duration: Duration(seconds: 2)),
+    );
+  }
+
+  void _zoomIn() {
+    _zoomCtrl.value = _zoomCtrl.value.clone()
+      ..multiply(Matrix4.diagonal3Values(1.25, 1.25, 1.0));
+  }
+
+  void _zoomOut() {
+    _zoomCtrl.value = _zoomCtrl.value.clone()
+      ..multiply(Matrix4.diagonal3Values(0.8, 0.8, 1.0));
+  }
+
+  void _zoomReset() {
+    _zoomCtrl.value = Matrix4.identity();
   }
 }
 
@@ -1726,6 +1988,265 @@ class _PythonHighlightEditingController extends TextEditingController {
 
   bool _isStringToken(String token) {
     return token.startsWith('"') || token.startsWith("'");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dot-grid background painter (used by Pyodide panels)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DotGrid extends CustomPainter {
+  const _DotGrid();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = Colors.white.withAlpha(10);
+    const spacing = 18.0;
+    for (double x = spacing / 2; x < size.width; x += spacing) {
+      for (double y = spacing / 2; y < size.height; y += spacing) {
+        canvas.drawCircle(Offset(x, y), 0.8, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DotGrid old) => false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read-only code display panel with header bar (copy + fullscreen)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CodeDisplayWidget extends StatefulWidget {
+  final List<InlineSpan> spans;
+  final String rawText;
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  const _CodeDisplayWidget({
+    required this.spans,
+    required this.rawText,
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  State<_CodeDisplayWidget> createState() => _CodeDisplayWidgetState();
+}
+
+class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
+  late final OverlayPortalController _fsCtrl;
+  late final ScrollController _panelScrollCtrl;
+  late final ScrollController _fsScrollCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _fsCtrl = OverlayPortalController();
+    _panelScrollCtrl = ScrollController();
+    _fsScrollCtrl = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _panelScrollCtrl.dispose();
+    _fsScrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OverlayPortal(
+      controller: _fsCtrl,
+      overlayChildBuilder: (_) => _buildFull(),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final s = (constraints.maxHeight / 420.0).clamp(0.4, 3.0);
+          return _buildPanel(s);
+        },
+      ),
+    );
+  }
+
+  Widget _buildPanel(double s) {
+    final color = widget.color;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12 * s),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Container(color: const Color(0xFF0E1621)),
+          CustomPaint(painter: _DotGrid()),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: color.withAlpha(77), width: 1.0),
+              borderRadius: BorderRadius.circular(12 * s),
+            ),
+            child: Column(
+              children: [
+                _buildHeader(s: s, isFullscreen: false),
+                Expanded(
+                  child: Container(
+                    color: const Color(0xFF1E1E1E),
+                    child: Scrollbar(
+                      controller: _panelScrollCtrl,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _panelScrollCtrl,
+                        padding: EdgeInsets.all(10 * s),
+                        child: Text.rich(
+                          TextSpan(children: widget.spans),
+                          style: TextStyle(
+                            fontSize: 12.0 * s,
+                            fontFamily: 'Consolas',
+                            fontFamilyFallback: const ['Courier New', 'monospace'],
+                            height: 1.35,
+                            color: const Color(0xFFD4D4D4),
+                          ),
+                          softWrap: true,
+                          overflow: TextOverflow.visible,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFull() {
+    final color = widget.color;
+    const s = 2.0;
+    return Material(
+      color: const Color(0xFF0E1621),
+      child: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CustomPaint(painter: _DotGrid()),
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: color.withAlpha(60), width: 0.8),
+              ),
+              child: Column(
+                children: [
+                  _buildHeader(s: s, isFullscreen: true),
+                  Expanded(
+                    child: Container(
+                      color: const Color(0xFF1E1E1E),
+                      child: Scrollbar(
+                        controller: _fsScrollCtrl,
+                        thumbVisibility: true,
+                        child: SingleChildScrollView(
+                          controller: _fsScrollCtrl,
+                          padding: const EdgeInsets.all(20),
+                          child: Text.rich(
+                            TextSpan(children: widget.spans),
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontFamily: 'Consolas',
+                              fontFamilyFallback: ['Courier New', 'monospace'],
+                              height: 1.45,
+                              color: Color(0xFFD4D4D4),
+                            ),
+                            softWrap: true,
+                            overflow: TextOverflow.visible,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader({required double s, required bool isFullscreen}) {
+    final color = widget.color;
+    return Container(
+      height: 30 * s,
+      padding: EdgeInsets.symmetric(horizontal: 10 * s),
+      decoration: BoxDecoration(
+        color: color.withAlpha(18),
+        border: Border(bottom: BorderSide(color: color.withAlpha(46), width: 0.8)),
+      ),
+      child: Row(
+        children: [
+          Icon(widget.icon, color: color, size: 11 * s),
+          SizedBox(width: 6 * s),
+          Expanded(
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: color,
+                fontSize: 8.5 * s,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.4,
+              ),
+            ),
+          ),
+          _headerBtn(
+            icon: Icons.content_copy_rounded,
+            tooltip: 'Copiar',
+            color: color,
+            s: s,
+            onTap: _copyCode,
+          ),
+          SizedBox(width: 4 * s),
+          _headerBtn(
+            icon: isFullscreen
+                ? Icons.close_fullscreen_rounded
+                : Icons.open_in_full_rounded,
+            tooltip: isFullscreen ? 'Fechar' : 'Expandir',
+            color: color,
+            s: s,
+            onTap: isFullscreen ? _fsCtrl.hide : _fsCtrl.show,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerBtn({
+    required IconData icon,
+    required String tooltip,
+    required Color color,
+    required double s,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6 * s),
+        onTap: onTap,
+        child: SizedBox(
+          width: 20 * s,
+          height: 20 * s,
+          child: Icon(icon, color: color.withAlpha(180), size: 11 * s),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyCode() async {
+    await Clipboard.setData(ClipboardData(text: widget.rawText));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Código copiado.'),
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 }
 

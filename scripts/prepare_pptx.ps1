@@ -3,8 +3,9 @@
     Prepara um arquivo .pptx para ser compilado diretamente no app Flutter.
 
 .DESCRIPTION
-    1. Copia o .pptx para assets/presentation.pptx (embutido na compilacao)
-    2. Opcionalmente executa: flutter build web --wasm --release
+    1. Copia o .pptx para assets/presentation.pptx
+    2. Regenera lib/generated/presentation_data.g.dart
+    3. Opcionalmente executa: flutter build web --wasm --release
 
 .PARAMETER PptxPath
     Caminho para o arquivo .pptx de origem (relativo ou absoluto).
@@ -62,6 +63,18 @@ Copy-Item -Path $PptxPath -Destination $destination -Force
 $sizeKB = [int]((Get-Item $destination).Length / 1024)
 Write-Host "  OK: $sizeKB KB copiados"
 
+Write-Host ""
+Write-Host "→ Gerando lib/generated/presentation_data.g.dart"
+Push-Location $projectRoot
+try {
+    $env:PPTX_INPUT = "assets/presentation.pptx"
+    flutter test tool/compile_pptx.dart
+    if ($LASTEXITCODE -ne 0) { throw "compilacao do PPTX falhou (exit $LASTEXITCODE)" }
+} finally {
+    Remove-Item Env:\PPTX_INPUT -ErrorAction SilentlyContinue
+    Pop-Location
+}
+
 if ($Build) {
     Write-Host ""
     Write-Host "→ Compilando: flutter build web --wasm --base-href $BasePath --release"
@@ -81,7 +94,7 @@ if ($Build) {
     }
 } else {
     Write-Host ""
-    Write-Host "✓ Asset atualizado. Para compilar:"
+    Write-Host "✓ PPTX compilado para Dart. Para gerar build/web:"
     Write-Host "    flutter build web --wasm --base-href $BasePath --release"
     Write-Host "  Ou execute este script com a flag -Build."
 }
