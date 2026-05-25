@@ -1,6 +1,52 @@
 # con_pptx_html
 
-A new Flutter project.
+Conversor de apresentacoes PowerPoint (.pptx) para Web usando Flutter WASM.
+
+## Gerar o site com um PPTX novo
+
+Nao use apenas `flutter build web --wasm` depois de trocar o PPTX. Esse
+comando compila o Flutter, mas nao regenera os dados embutidos da apresentacao.
+
+Use um destes comandos:
+
+```powershell
+.\scripts\build_web_pptx.ps1
+```
+
+Ou passando outro PPTX:
+
+```powershell
+.\scripts\build_web_pptx.ps1 "C:\caminho\aula.pptx"
+```
+
+Tambem funciona via `.cmd`:
+
+```powershell
+.\scripts\build_web_pptx.cmd "C:\caminho\aula.pptx"
+```
+
+Alternativa usando a ferramenta Dart:
+
+```powershell
+dart run tool/build_web.dart assets/presentation.pptx
+```
+
+Ou, para copiar outro arquivo para `assets/presentation.pptx`, regenerar os
+dados e gerar `build/web`:
+
+```powershell
+.\scripts\prepare_pptx.ps1 -PptxPath "C:\caminho\aula.pptx" -Build
+```
+
+Se quiser apenas regenerar os dados depois de substituir
+`assets/presentation.pptx` manualmente:
+
+```powershell
+$env:PPTX_INPUT='assets/presentation.pptx'
+flutter test tool/compile_pptx.dart
+flutter build web --wasm
+Remove-Item Env:\PPTX_INPUT
+```
 
 ## Comparacao Visual Automatica (Slide a Slide)
 

@@ -15,7 +15,7 @@
     ou "/nome-do-repositorio/" para repositorios de projeto.
 
 .PARAMETER Build
-    Se especificado, executa flutter build web --wasm apos copiar.
+    Se especificado, executa flutter build web --wasm apos regenerar o Dart.
 
 .EXAMPLE
     .\scripts\prepare_pptx.ps1 -PptxPath "aula01.pptx" -Build

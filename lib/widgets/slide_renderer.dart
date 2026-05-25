@@ -1322,6 +1322,10 @@ class _PyodideCommandOverlay extends StatefulWidget {
 }
 
 class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
+  static const double _defaultCodeFontSize = 20.0;
+  static const double _minCodeFontSize = 12.0;
+  static const double _maxCodeFontSize = 36.0;
+
   late final _PythonHighlightEditingController _codeController;
   late final ScrollController _outputScrollController;
   late final TransformationController _zoomCtrl;
@@ -1334,11 +1338,14 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
   bool _runtimeReady = false;
   bool _running = false;
   bool _hasError = false;
+  double _codeFontSize = _defaultCodeFontSize;
 
   @override
   void initState() {
     super.initState();
-    _codeController = _PythonHighlightEditingController(widget.layout.initialCode);
+    _codeController = _PythonHighlightEditingController(
+      widget.layout.initialCode,
+    );
     _outputScrollController = ScrollController();
     _zoomCtrl = TransformationController();
     _editorFsCtrl = OverlayPortalController();
@@ -1385,7 +1392,8 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
       text = raw;
       plots = [];
     }
-    final hasErr = text.contains('[Exceção Python]') ||
+    final hasErr =
+        text.contains('[Exceção Python]') ||
         text.contains('Erro interno:') ||
         text.contains('Erro ao executar Python:');
     setState(() {
@@ -1427,9 +1435,15 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
             return Stack(
               clipBehavior: Clip.hardEdge,
               children: [
-                Positioned.fromRect(rect: codeRect, child: _buildEditorPanel(s)),
+                Positioned.fromRect(
+                  rect: codeRect,
+                  child: _buildEditorPanel(s),
+                ),
                 if (answerRect != null)
-                  Positioned.fromRect(rect: answerRect, child: _buildOutputPanel(s)),
+                  Positioned.fromRect(
+                    rect: answerRect,
+                    child: _buildOutputPanel(s),
+                  ),
               ],
             );
           },
@@ -1441,8 +1455,14 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
   Rect _relativeRect(_OverlayBounds target, _OverlayBounds root, Size size) {
     final rootW = root.cxEmu <= 0 ? 1.0 : root.cxEmu;
     final rootH = root.cyEmu <= 0 ? 1.0 : root.cyEmu;
-    final left = ((target.xEmu - root.xEmu) / rootW * size.width).clamp(0.0, size.width);
-    final top = ((target.yEmu - root.yEmu) / rootH * size.height).clamp(0.0, size.height);
+    final left = ((target.xEmu - root.xEmu) / rootW * size.width).clamp(
+      0.0,
+      size.width,
+    );
+    final top = ((target.yEmu - root.yEmu) / rootH * size.height).clamp(
+      0.0,
+      size.height,
+    );
     final width = (target.cxEmu / rootW * size.width).clamp(0.0, size.width);
     final height = (target.cyEmu / rootH * size.height).clamp(0.0, size.height);
     return Rect.fromLTWH(left, top, width, height);
@@ -1472,7 +1492,29 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
                   color: color,
                   s: s,
                   actions: [
-                    _headerBtn(icon: Icons.content_copy_rounded, tooltip: 'Copiar', color: color, s: s, onTap: _copyCode),
+                    _headerTextBtn(
+                      label: 'A-',
+                      tooltip: 'Diminuir texto',
+                      color: color,
+                      s: s,
+                      onTap: _decreaseCodeFont,
+                    ),
+                    SizedBox(width: 2 * s),
+                    _headerTextBtn(
+                      label: 'A+',
+                      tooltip: 'Aumentar texto',
+                      color: color,
+                      s: s,
+                      onTap: _increaseCodeFont,
+                    ),
+                    SizedBox(width: 4 * s),
+                    _headerBtn(
+                      icon: Icons.content_copy_rounded,
+                      tooltip: 'Copiar',
+                      color: color,
+                      s: s,
+                      onTap: _copyCode,
+                    ),
                     SizedBox(width: 4 * s),
                     _headerBtn(
                       icon: Icons.open_in_full_rounded,
@@ -1495,7 +1537,7 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
                       minLines: null,
                       cursorColor: const Color(0xFF00E5FF),
                       style: TextStyle(
-                        fontSize: 12.0 * s,
+                        fontSize: _codeFontSize,
                         fontFamily: 'Consolas',
                         fontFamilyFallback: const ['Courier New', 'monospace'],
                         height: 1.45,
@@ -1531,7 +1573,9 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
     } else if (_hasError) {
       borderColor = const Color(0xFFFF3B30).withAlpha(100);
       headerColor = const Color(0xFFFF3B30);
-    } else if (_plotImages.isNotEmpty || (_textOutput.isNotEmpty && _textOutput != widget.layout.initialOutput)) {
+    } else if (_plotImages.isNotEmpty ||
+        (_textOutput.isNotEmpty &&
+            _textOutput != widget.layout.initialOutput)) {
       borderColor = const Color(0xFF30D158).withAlpha(80);
       headerColor = const Color(0xFF30D158);
     } else {
@@ -1566,11 +1610,29 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
                   s: s,
                   actions: [
                     if (_plotImages.isNotEmpty) ...[
-                      _headerBtn(icon: Icons.zoom_in_rounded, tooltip: 'Zoom +', color: headerColor, s: s, onTap: _zoomIn),
+                      _headerBtn(
+                        icon: Icons.zoom_in_rounded,
+                        tooltip: 'Zoom +',
+                        color: headerColor,
+                        s: s,
+                        onTap: _zoomIn,
+                      ),
                       SizedBox(width: 2 * s),
-                      _headerBtn(icon: Icons.zoom_out_rounded, tooltip: 'Zoom -', color: headerColor, s: s, onTap: _zoomOut),
+                      _headerBtn(
+                        icon: Icons.zoom_out_rounded,
+                        tooltip: 'Zoom -',
+                        color: headerColor,
+                        s: s,
+                        onTap: _zoomOut,
+                      ),
                       SizedBox(width: 2 * s),
-                      _headerBtn(icon: Icons.zoom_out_map_rounded, tooltip: 'Resetar zoom', color: headerColor, s: s, onTap: _zoomReset),
+                      _headerBtn(
+                        icon: Icons.zoom_out_map_rounded,
+                        tooltip: 'Resetar zoom',
+                        color: headerColor,
+                        s: s,
+                        onTap: _zoomReset,
+                      ),
                       SizedBox(width: 4 * s),
                     ],
                     _headerBtn(
@@ -1677,7 +1739,29 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
                     color: color,
                     s: s,
                     actions: [
-                      _headerBtn(icon: Icons.content_copy_rounded, tooltip: 'Copiar', color: color, s: s, onTap: _copyCode),
+                      _headerTextBtn(
+                        label: 'A-',
+                        tooltip: 'Diminuir texto',
+                        color: color,
+                        s: s,
+                        onTap: _decreaseCodeFont,
+                      ),
+                      SizedBox(width: 2 * s),
+                      _headerTextBtn(
+                        label: 'A+',
+                        tooltip: 'Aumentar texto',
+                        color: color,
+                        s: s,
+                        onTap: _increaseCodeFont,
+                      ),
+                      SizedBox(width: 4 * s),
+                      _headerBtn(
+                        icon: Icons.content_copy_rounded,
+                        tooltip: 'Copiar',
+                        color: color,
+                        s: s,
+                        onTap: _copyCode,
+                      ),
                       SizedBox(width: 4 * s),
                       _headerBtn(
                         icon: Icons.close_fullscreen_rounded,
@@ -1699,12 +1783,15 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
                         maxLines: null,
                         minLines: null,
                         cursorColor: const Color(0xFF00E5FF),
-                        style: const TextStyle(
-                          fontSize: 16,
+                        style: TextStyle(
+                          fontSize: _codeFontSize,
                           fontFamily: 'Consolas',
-                          fontFamilyFallback: ['Courier New', 'monospace'],
+                          fontFamilyFallback: const [
+                            'Courier New',
+                            'monospace',
+                          ],
                           height: 1.5,
-                          color: Color(0xFFD4D4D4),
+                          color: const Color(0xFFD4D4D4),
                         ),
                         decoration: const InputDecoration(
                           contentPadding: EdgeInsets.all(16),
@@ -1751,11 +1838,29 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
                     s: s,
                     actions: [
                       if (_plotImages.isNotEmpty) ...[
-                        _headerBtn(icon: Icons.zoom_in_rounded, tooltip: 'Zoom +', color: color, s: s, onTap: _zoomIn),
+                        _headerBtn(
+                          icon: Icons.zoom_in_rounded,
+                          tooltip: 'Zoom +',
+                          color: color,
+                          s: s,
+                          onTap: _zoomIn,
+                        ),
                         SizedBox(width: 2 * s),
-                        _headerBtn(icon: Icons.zoom_out_rounded, tooltip: 'Zoom -', color: color, s: s, onTap: _zoomOut),
+                        _headerBtn(
+                          icon: Icons.zoom_out_rounded,
+                          tooltip: 'Zoom -',
+                          color: color,
+                          s: s,
+                          onTap: _zoomOut,
+                        ),
                         SizedBox(width: 2 * s),
-                        _headerBtn(icon: Icons.zoom_out_map_rounded, tooltip: 'Reset', color: color, s: s, onTap: _zoomReset),
+                        _headerBtn(
+                          icon: Icons.zoom_out_map_rounded,
+                          tooltip: 'Reset',
+                          color: color,
+                          s: s,
+                          onTap: _zoomReset,
+                        ),
                         SizedBox(width: 4 * s),
                       ],
                       _headerBtn(
@@ -1791,7 +1896,9 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
       padding: EdgeInsets.symmetric(horizontal: 10 * s),
       decoration: BoxDecoration(
         color: color.withAlpha(18),
-        border: Border(bottom: BorderSide(color: color.withAlpha(46), width: 0.8)),
+        border: Border(
+          bottom: BorderSide(color: color.withAlpha(46), width: 0.8),
+        ),
       ),
       child: Row(
         children: [
@@ -1830,6 +1937,36 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
           width: 20 * s,
           height: 20 * s,
           child: Icon(icon, color: color.withAlpha(180), size: 11 * s),
+        ),
+      ),
+    );
+  }
+
+  Widget _headerTextBtn({
+    required String label,
+    required String tooltip,
+    required Color color,
+    required double s,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6 * s),
+        onTap: onTap,
+        child: SizedBox(
+          width: 24 * s,
+          height: 20 * s,
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color.withAlpha(200),
+                fontSize: 8.5 * s,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -1881,7 +2018,12 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
               SizedBox(width: 7 * s),
               Text(
                 label,
-                style: TextStyle(fontSize: 11 * s, fontWeight: FontWeight.w700, color: fg, letterSpacing: 0.5),
+                style: TextStyle(
+                  fontSize: 11 * s,
+                  fontWeight: FontWeight.w700,
+                  color: fg,
+                  letterSpacing: 0.5,
+                ),
               ),
             ],
           ),
@@ -1896,8 +2038,29 @@ class _PyodideCommandOverlayState extends State<_PyodideCommandOverlay> {
     await Clipboard.setData(ClipboardData(text: _codeController.text));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Código copiado.'), duration: Duration(seconds: 2)),
+      const SnackBar(
+        content: Text('Código copiado.'),
+        duration: Duration(seconds: 2),
+      ),
     );
+  }
+
+  void _increaseCodeFont() {
+    setState(() {
+      _codeFontSize = (_codeFontSize + 2).clamp(
+        _minCodeFontSize,
+        _maxCodeFontSize,
+      );
+    });
+  }
+
+  void _decreaseCodeFont() {
+    setState(() {
+      _codeFontSize = (_codeFontSize - 2).clamp(
+        _minCodeFontSize,
+        _maxCodeFontSize,
+      );
+    });
   }
 
   void _zoomIn() {
@@ -1920,7 +2083,6 @@ class _PythonHighlightEditingController extends TextEditingController {
 
   static const TextStyle _baseStyle = TextStyle(
     color: Color(0xFFD4D4D4),
-    fontSize: 20,
     fontFamily: 'Consolas',
     fontFamilyFallback: ['Courier New', 'monospace'],
     height: 1.35,
@@ -2037,9 +2199,14 @@ class _CodeDisplayWidget extends StatefulWidget {
 }
 
 class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
+  static const double _defaultCodeFontSize = 20.0;
+  static const double _minCodeFontSize = 12.0;
+  static const double _maxCodeFontSize = 36.0;
+
   late final OverlayPortalController _fsCtrl;
   late final ScrollController _panelScrollCtrl;
   late final ScrollController _fsScrollCtrl;
+  double _codeFontSize = _defaultCodeFontSize;
 
   @override
   void initState() {
@@ -2085,10 +2252,12 @@ class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
               borderRadius: BorderRadius.circular(12 * s),
             ),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _buildHeader(s: s, isFullscreen: false),
                 Expanded(
                   child: Container(
+                    width: double.infinity,
                     color: const Color(0xFF1E1E1E),
                     child: Scrollbar(
                       controller: _panelScrollCtrl,
@@ -2099,9 +2268,12 @@ class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
                         child: Text.rich(
                           TextSpan(children: widget.spans),
                           style: TextStyle(
-                            fontSize: 12.0 * s,
+                            fontSize: _codeFontSize,
                             fontFamily: 'Consolas',
-                            fontFamilyFallback: const ['Courier New', 'monospace'],
+                            fontFamilyFallback: const [
+                              'Courier New',
+                              'monospace',
+                            ],
                             height: 1.35,
                             color: const Color(0xFFD4D4D4),
                           ),
@@ -2135,10 +2307,12 @@ class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
                 border: Border.all(color: color.withAlpha(60), width: 0.8),
               ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _buildHeader(s: s, isFullscreen: true),
                   Expanded(
                     child: Container(
+                      width: double.infinity,
                       color: const Color(0xFF1E1E1E),
                       child: Scrollbar(
                         controller: _fsScrollCtrl,
@@ -2148,12 +2322,15 @@ class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
                           padding: const EdgeInsets.all(20),
                           child: Text.rich(
                             TextSpan(children: widget.spans),
-                            style: const TextStyle(
-                              fontSize: 16,
+                            style: TextStyle(
+                              fontSize: _codeFontSize,
                               fontFamily: 'Consolas',
-                              fontFamilyFallback: ['Courier New', 'monospace'],
+                              fontFamilyFallback: const [
+                                'Courier New',
+                                'monospace',
+                              ],
                               height: 1.45,
-                              color: Color(0xFFD4D4D4),
+                              color: const Color(0xFFD4D4D4),
                             ),
                             softWrap: true,
                             overflow: TextOverflow.visible,
@@ -2178,7 +2355,9 @@ class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
       padding: EdgeInsets.symmetric(horizontal: 10 * s),
       decoration: BoxDecoration(
         color: color.withAlpha(18),
-        border: Border(bottom: BorderSide(color: color.withAlpha(46), width: 0.8)),
+        border: Border(
+          bottom: BorderSide(color: color.withAlpha(46), width: 0.8),
+        ),
       ),
       child: Row(
         children: [
@@ -2195,6 +2374,22 @@ class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
               ),
             ),
           ),
+          _headerTextBtn(
+            label: 'A-',
+            tooltip: 'Diminuir texto',
+            color: color,
+            s: s,
+            onTap: _decreaseCodeFont,
+          ),
+          SizedBox(width: 2 * s),
+          _headerTextBtn(
+            label: 'A+',
+            tooltip: 'Aumentar texto',
+            color: color,
+            s: s,
+            onTap: _increaseCodeFont,
+          ),
+          SizedBox(width: 4 * s),
           _headerBtn(
             icon: Icons.content_copy_rounded,
             tooltip: 'Copiar',
@@ -2238,6 +2433,36 @@ class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
     );
   }
 
+  Widget _headerTextBtn({
+    required String label,
+    required String tooltip,
+    required Color color,
+    required double s,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6 * s),
+        onTap: onTap,
+        child: SizedBox(
+          width: 24 * s,
+          height: 20 * s,
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color.withAlpha(200),
+                fontSize: 8.5 * s,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _copyCode() async {
     await Clipboard.setData(ClipboardData(text: widget.rawText));
     if (!mounted) return;
@@ -2247,6 +2472,24 @@ class _CodeDisplayWidgetState extends State<_CodeDisplayWidget> {
         duration: Duration(seconds: 2),
       ),
     );
+  }
+
+  void _increaseCodeFont() {
+    setState(() {
+      _codeFontSize = (_codeFontSize + 2).clamp(
+        _minCodeFontSize,
+        _maxCodeFontSize,
+      );
+    });
+  }
+
+  void _decreaseCodeFont() {
+    setState(() {
+      _codeFontSize = (_codeFontSize - 2).clamp(
+        _minCodeFontSize,
+        _maxCodeFontSize,
+      );
+    });
   }
 }
 
