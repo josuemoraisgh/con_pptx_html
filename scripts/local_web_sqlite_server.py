@@ -52,6 +52,12 @@ class LocalWebSqliteHandler(SimpleHTTPRequestHandler):
         self._db_lock = db_lock
         super().__init__(*args, **kwargs)
 
+    def end_headers(self) -> None:
+        # Necessario para SharedArrayBuffer (Flutter WASM / skwasm multithread).
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+        super().end_headers()
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
@@ -82,9 +88,9 @@ class LocalWebSqliteHandler(SimpleHTTPRequestHandler):
 
         # Em alguns ambientes o build pode sair sem main.dart.mjs. Forcamos
         # o renderer CanvasKit para usar main.dart.js e evitar tela em branco.
-        if not wasm_runtime_exists and "config: { renderer: \"canvaskit\" }" not in content:
+        if not wasm_runtime_exists and 'config: { renderer: "canvaskit" }' not in content:
             marker = "_flutter.loader.load({"
-            replacement = "_flutter.loader.load({\\n  config: { renderer: \"canvaskit\" },"
+            replacement = '_flutter.loader.load({\n  config: { renderer: "canvaskit" },'
             if marker in content:
                 content = content.replace(marker, replacement, 1)
 
