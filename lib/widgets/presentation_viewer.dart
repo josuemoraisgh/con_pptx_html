@@ -727,6 +727,7 @@ class _PresentationViewerState extends State<PresentationViewer>
   Widget _buildAudienceSlideView() {
     final pres = widget.presentation;
     final slide = pres.slides[_currentIndex];
+    final quizInvocation = extractQuizInvocation(slide);
     final visibleIds = _buildVisibleIds(slide, _animStep);
     return Listener(
       onPointerDown: (_) => _requestKeyboardFocus(),
@@ -747,8 +748,11 @@ class _PresentationViewerState extends State<PresentationViewer>
                     child: SizedBox(
                       width: pres.canvasWidth,
                       height: pres.canvasHeight,
-                      child: slideHasQuizAltText(slide)
-                          ? const QuizSlideHost()
+                      child: quizInvocation != null
+                          ? QuizSlideHost(
+                              invocation: quizInvocation,
+                              slide: slide,
+                            )
                           : SlideRenderer(
                               slide: slide,
                               presentation: pres,
@@ -947,6 +951,7 @@ class _PresentationViewerState extends State<PresentationViewer>
     required int index,
   }) {
     final slide = pres.slides[index];
+    final quizInvocation = extractQuizInvocation(slide);
     final visibleIds = _buildVisibleIds(
       slide,
       index == _currentIndex ? _animStep : 999,
@@ -981,8 +986,8 @@ class _PresentationViewerState extends State<PresentationViewer>
                 child: SizedBox(
                   width: pres.canvasWidth,
                   height: pres.canvasHeight,
-                  child: slideHasQuizAltText(slide)
-                      ? const QuizSlideHost()
+                  child: quizInvocation != null
+                      ? QuizSlideHost(invocation: quizInvocation, slide: slide)
                       : SlideRenderer(
                           slide: slide,
                           presentation: pres,

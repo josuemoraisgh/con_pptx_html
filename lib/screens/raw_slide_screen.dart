@@ -65,6 +65,7 @@ class _RawSlideScreenState extends State<RawSlideScreen> {
     final pres = widget.presentation;
     final idx = widget.slideIndex.clamp(0, pres.slides.length - 1);
     final slide = pres.slides[idx];
+    final quizInvocation = extractQuizInvocation(slide);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -76,8 +77,8 @@ class _RawSlideScreenState extends State<RawSlideScreen> {
             child: SizedBox(
               width: pres.canvasWidth,
               height: pres.canvasHeight,
-              child: slideHasQuizAltText(slide)
-                  ? const QuizSlideHost()
+              child: quizInvocation != null
+                  ? QuizSlideHost(invocation: quizInvocation, slide: slide)
                   : SlideRenderer(
                       slide: slide,
                       presentation: pres,

@@ -48,6 +48,75 @@ flutter build web --wasm
 Remove-Item Env:\PPTX_INPUT
 ```
 
+## Rodar local com servidor + SQLite
+
+Depois de gerar o `build/web`, execute um servidor local que tambem inicializa
+um banco SQLite para desenvolvimento.
+
+### 1) Compilar
+
+```powershell
+.\scripts\build_web_pptx.ps1
+```
+
+### 2) Subir servidor local com SQLite
+
+```powershell
+.\scripts\run_local_web_sqlite.ps1
+```
+
+Parametros opcionais:
+
+```powershell
+.\scripts\run_local_web_sqlite.ps1 -Port 8080 -DbPath "local/app.db"
+```
+
+URLs uteis:
+
+- App: http://127.0.0.1:8080
+- Health/API: http://127.0.0.1:8080/api/health
+
+### 3) Testar escrita e leitura no SQLite (PowerShell)
+
+Escrever uma chave:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/api/kv" -ContentType "application/json" -Body '{"key":"aula","value":"demo"}'
+```
+
+Ler a chave:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8080/api/kv?key=aula"
+```
+
+Listar todos:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8080/api/kv/all"
+```
+
+Parar o servidor: `Ctrl + C`.
+
+### Troubleshooting de tela em branco
+
+Se aparecer erro de `main.dart.mjs` (404) no terminal do servidor:
+
+- Reinicie o servidor com `.\scripts\run_local_web_sqlite.ps1`.
+- Force recarregamento no navegador com `Ctrl + F5`.
+- Se ainda persistir, limpe o Service Worker do site (DevTools > Application > Service Workers > Unregister) e recarregue.
+
+Obs.: o servidor local agora aplica fallback automatico para CanvasKit quando
+`main.dart.mjs` nao estiver presente no `build/web`.
+
+### Endpoint SQL livre (somente dev)
+
+Para executar uma unica instrucao SQL diretamente:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/api/sql" -ContentType "application/json" -Body '{"sql":"select key, value from app_kv order by key"}'
+```
+
 ## Comparacao Visual Automatica (Slide a Slide)
 
 Use o script abaixo para comparar o render atual do app contra imagens de

@@ -331,6 +331,7 @@ class _PresenterPanelState extends State<PresenterPanel> {
     SlideData slide,
     Set<int>? visibleIds,
   ) {
+    final quizInvocation = extractQuizInvocation(slide);
     return Container(
       decoration: BoxDecoration(
         border: Border.all(color: const Color(0xFF7C6AF7), width: 2),
@@ -345,8 +346,8 @@ class _PresenterPanelState extends State<PresenterPanel> {
             child: SizedBox(
               width: pres.canvasWidth,
               height: pres.canvasHeight,
-              child: slideHasQuizAltText(slide)
-                  ? const QuizSlideHost()
+              child: quizInvocation != null
+                  ? QuizSlideHost(invocation: quizInvocation, slide: slide)
                   : SlideRenderer(
                       slide: slide,
                       presentation: pres,

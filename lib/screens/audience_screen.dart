@@ -159,6 +159,7 @@ class _AudienceScreenState extends State<AudienceScreen> {
     final pres = widget.presentation;
     final idx = _slideIndex.clamp(0, pres.slides.length - 1);
     final slide = pres.slides[idx];
+    final quizInvocation = extractQuizInvocation(slide);
     final visibleIds = _buildVisibleIds(slide, _animStep);
 
     return Listener(
@@ -180,8 +181,11 @@ class _AudienceScreenState extends State<AudienceScreen> {
                     child: SizedBox(
                       width: pres.canvasWidth,
                       height: pres.canvasHeight,
-                      child: slideHasQuizAltText(slide)
-                          ? const QuizSlideHost()
+                      child: quizInvocation != null
+                          ? QuizSlideHost(
+                              invocation: quizInvocation,
+                              slide: slide,
+                            )
                           : SlideRenderer(
                               slide: slide,
                               presentation: pres,
