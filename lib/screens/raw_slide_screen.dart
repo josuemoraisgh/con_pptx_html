@@ -1,8 +1,9 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/pptx_models.dart';
+import '../utils/quiz_slide_detector.dart';
+import '../widgets/quiz_slide_host.dart';
 import '../widgets/slide_renderer.dart';
 
 /// Renderiza um slide único sem nenhuma UI — usado para comparação visual.
@@ -75,12 +76,14 @@ class _RawSlideScreenState extends State<RawSlideScreen> {
             child: SizedBox(
               width: pres.canvasWidth,
               height: pres.canvasHeight,
-              child: SlideRenderer(
-                slide: slide,
-                presentation: pres,
-                visibleIds: null,
-                animStep: 0,
-              ),
+              child: slideHasQuizAltText(slide)
+                  ? const QuizSlideHost()
+                  : SlideRenderer(
+                      slide: slide,
+                      presentation: pres,
+                      visibleIds: null,
+                      animStep: 0,
+                    ),
             ),
           ),
         ),

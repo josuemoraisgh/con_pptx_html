@@ -18,6 +18,8 @@ dependencies:
   collection: ^1.19.0
   web: ^1.1.0
   cupertino_icons: ^1.0.9
+  moodle_quiz_dep:
+    path: C:/SourceCode/moodle_quiz_dep
 
 dev_dependencies:
   flutter_test:

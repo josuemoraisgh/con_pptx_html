@@ -9,7 +9,9 @@ import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
 import '../utils/animation_visibility.dart';
 import '../utils/deferred_hover_state.dart';
+import '../utils/quiz_slide_detector.dart';
 import 'presenter_panel.dart';
+import 'quiz_slide_host.dart';
 import 'slide_renderer.dart';
 
 // ── Cores de acento cicladas por slide (identidade do projeto de referência) ──
@@ -171,8 +173,10 @@ class _PresentationViewerState extends State<PresentationViewer>
 
   SlideData get _currentSlide => widget.presentation.slides[_currentIndex];
 
+  bool get _currentSlideIsQuiz => slideHasQuizAltText(_currentSlide);
+
   bool get _currentSlideHasInteractiveCommand =>
-      _slideHasInteractiveCommand(_currentSlide);
+      _currentSlideIsQuiz || _slideHasInteractiveCommand(_currentSlide);
 
   bool _slideHasInteractiveCommand(SlideData slide) {
     final commandPattern = RegExp(r'\{([^{}]+)\}');
@@ -361,6 +365,7 @@ class _PresentationViewerState extends State<PresentationViewer>
 
   void _onKey(KeyEvent event) {
     if (event is! KeyDownEvent) return;
+    if (_currentSlideIsQuiz) return;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowRight:
       case LogicalKeyboardKey.arrowDown:
@@ -742,12 +747,14 @@ class _PresentationViewerState extends State<PresentationViewer>
                     child: SizedBox(
                       width: pres.canvasWidth,
                       height: pres.canvasHeight,
-                      child: SlideRenderer(
-                        slide: slide,
-                        presentation: pres,
-                        visibleIds: visibleIds,
-                        animStep: _animStep,
-                      ),
+                      child: slideHasQuizAltText(slide)
+                          ? const QuizSlideHost()
+                          : SlideRenderer(
+                              slide: slide,
+                              presentation: pres,
+                              visibleIds: visibleIds,
+                              animStep: _animStep,
+                            ),
                     ),
                   ),
                 ),
@@ -836,10 +843,12 @@ class _PresentationViewerState extends State<PresentationViewer>
                   child: SizedBox(
                     width: pres.canvasWidth,
                     height: pres.canvasHeight,
-                    child: SlideRenderer(
-                      slide: pres.slides[index],
-                      presentation: pres,
-                    ),
+                    child: slideHasQuizAltText(pres.slides[index])
+                        ? const QuizSlidePlaceholder()
+                        : SlideRenderer(
+                            slide: pres.slides[index],
+                            presentation: pres,
+                          ),
                   ),
                 ),
               ),
@@ -972,12 +981,14 @@ class _PresentationViewerState extends State<PresentationViewer>
                 child: SizedBox(
                   width: pres.canvasWidth,
                   height: pres.canvasHeight,
-                  child: SlideRenderer(
-                    slide: slide,
-                    presentation: pres,
-                    visibleIds: visibleIds,
-                    animStep: index == _currentIndex ? _animStep : 999,
-                  ),
+                  child: slideHasQuizAltText(slide)
+                      ? const QuizSlideHost()
+                      : SlideRenderer(
+                          slide: slide,
+                          presentation: pres,
+                          visibleIds: visibleIds,
+                          animStep: index == _currentIndex ? _animStep : 999,
+                        ),
                 ),
               ),
             ),

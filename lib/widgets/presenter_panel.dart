@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../models/pptx_models.dart';
 import '../utils/animation_visibility.dart';
 import '../utils/deferred_hover_state.dart';
+import '../utils/quiz_slide_detector.dart';
+import 'quiz_slide_host.dart';
 import 'slide_renderer.dart';
 
 /// Painel completo do apresentador.
@@ -95,6 +97,8 @@ class _PresenterPanelState extends State<PresenterPanel> {
     return widget.presentation.slides[i];
   }
 
+  bool get _currentSlideIsQuiz => slideHasQuizAltText(_currentSlide);
+
   SlideData? get _nextSlide {
     final ni = widget.slideIndex + 1;
     if (ni >= widget.presentation.slides.length) return null;
@@ -114,6 +118,7 @@ class _PresenterPanelState extends State<PresenterPanel> {
 
   void _onKey(KeyEvent event) {
     if (event is! KeyDownEvent) return;
+    if (_currentSlideIsQuiz) return;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowRight:
       case LogicalKeyboardKey.arrowDown:
@@ -135,6 +140,7 @@ class _PresenterPanelState extends State<PresenterPanel> {
 
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
+    if (_currentSlideIsQuiz) return;
     if (event.scrollDelta.dy.abs() < 8) return;
 
     final now = DateTime.now();
@@ -339,12 +345,14 @@ class _PresenterPanelState extends State<PresenterPanel> {
             child: SizedBox(
               width: pres.canvasWidth,
               height: pres.canvasHeight,
-              child: SlideRenderer(
-                slide: slide,
-                presentation: pres,
-                visibleIds: visibleIds,
-                animStep: widget.animStep,
-              ),
+              child: slideHasQuizAltText(slide)
+                  ? const QuizSlideHost()
+                  : SlideRenderer(
+                      slide: slide,
+                      presentation: pres,
+                      visibleIds: visibleIds,
+                      animStep: widget.animStep,
+                    ),
             ),
           ),
         ),
@@ -410,7 +418,9 @@ class _PresenterPanelState extends State<PresenterPanel> {
                       child: SizedBox(
                         width: pres.canvasWidth,
                         height: pres.canvasHeight,
-                        child: SlideRenderer(slide: next, presentation: pres),
+                        child: slideHasQuizAltText(next)
+                            ? const QuizSlidePlaceholder()
+                            : SlideRenderer(slide: next, presentation: pres),
                       ),
                     ),
                   ),

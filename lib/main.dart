@@ -46,9 +46,9 @@ class _BootstrapAppState extends State<_BootstrapApp> {
     }
 
     final presentation = kGeneratedPresentation;
-    final hasSlides = presentation?.slides.isNotEmpty ?? false;
+    final hasSlides = presentation.slides.isNotEmpty;
 
-    if (browser.isRawView && presentation != null && hasSlides) {
+    if (browser.isRawView && hasSlides) {
       return MaterialApp(
         title: 'Raw Slide',
         debugShowCheckedModeBanner: false,
@@ -60,7 +60,7 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       );
     }
 
-    if (browser.isAudienceView && presentation != null && hasSlides) {
+    if (browser.isAudienceView && hasSlides) {
       return MaterialApp(
         title: 'Apresentação - Plateia',
         debugShowCheckedModeBanner: false,
@@ -69,9 +69,6 @@ class _BootstrapAppState extends State<_BootstrapApp> {
       );
     }
 
-    return ConPptxHtmlApp(
-      presentation: presentation,
-      parseError: null,
-    );
+    return ConPptxHtmlApp(presentation: presentation, parseError: null);
   }
 }

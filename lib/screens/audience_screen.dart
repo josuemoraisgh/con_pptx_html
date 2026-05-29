@@ -8,6 +8,8 @@ import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
 import '../utils/animation_visibility.dart';
 import '../utils/deferred_hover_state.dart';
+import '../utils/quiz_slide_detector.dart';
+import '../widgets/quiz_slide_host.dart';
 import '../widgets/slide_renderer.dart';
 
 // A importação é circular aparente, mas presenter_panel.dart não importa
@@ -86,6 +88,7 @@ class _AudienceScreenState extends State<AudienceScreen> {
 
   void _onKey(KeyEvent event) {
     if (event is! KeyDownEvent) return;
+    if (_currentSlideIsQuiz) return;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowRight:
       case LogicalKeyboardKey.arrowDown:
@@ -111,6 +114,7 @@ class _AudienceScreenState extends State<AudienceScreen> {
 
   void _onPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
+    if (_currentSlideIsQuiz) return;
     if (event.scrollDelta.dy.abs() < 8) return;
 
     final now = DateTime.now();
@@ -125,6 +129,13 @@ class _AudienceScreenState extends State<AudienceScreen> {
 
   Set<int>? _buildVisibleIds(SlideData slide, int step) =>
       buildVisibleShapeIds(slide, step);
+
+  bool get _currentSlideIsQuiz {
+    final pres = widget.presentation;
+    if (pres.slides.isEmpty) return false;
+    final idx = _slideIndex.clamp(0, pres.slides.length - 1);
+    return slideHasQuizAltText(pres.slides[idx]);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -169,12 +180,14 @@ class _AudienceScreenState extends State<AudienceScreen> {
                     child: SizedBox(
                       width: pres.canvasWidth,
                       height: pres.canvasHeight,
-                      child: SlideRenderer(
-                        slide: slide,
-                        presentation: pres,
-                        visibleIds: visibleIds,
-                        animStep: _animStep,
-                      ),
+                      child: slideHasQuizAltText(slide)
+                          ? const QuizSlideHost()
+                          : SlideRenderer(
+                              slide: slide,
+                              presentation: pres,
+                              visibleIds: visibleIds,
+                              animStep: _animStep,
+                            ),
                     ),
                   ),
                 ),
