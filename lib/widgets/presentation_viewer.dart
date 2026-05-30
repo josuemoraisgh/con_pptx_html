@@ -745,6 +745,7 @@ class _PresentationViewerState extends State<PresentationViewer>
                   child: QuizSlideHost(
                     invocation: quizInvocation,
                     slide: slide,
+                    slideDisplayIndex: _currentIndex + 1,
                   ),
                 )
               else
@@ -960,7 +961,11 @@ class _PresentationViewerState extends State<PresentationViewer>
     if (quizInvocation != null) {
       return SizedBox.expand(
         key: key,
-        child: QuizSlideHost(invocation: quizInvocation, slide: slide),
+        child: QuizSlideHost(
+          invocation: quizInvocation,
+          slide: slide,
+          slideDisplayIndex: index + 1,
+        ),
       );
     }
 

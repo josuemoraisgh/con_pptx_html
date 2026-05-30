@@ -8,14 +8,35 @@ import '../services/quiz_slide_question_builder.dart';
 import '../models/pptx_models.dart';
 import '../utils/quiz_slide_detector.dart';
 
+// Cache de participantes — evita reler o xlsx a cada slide
+Future<List<String>>? _cachedParticipantsFuture;
+String? _cachedParticipantsPath;
+
+Future<List<String>> _loadParticipantsCached(String assetPath) {
+  if (_cachedParticipantsFuture != null &&
+      _cachedParticipantsPath == assetPath) {
+    return _cachedParticipantsFuture!;
+  }
+  _cachedParticipantsPath = assetPath;
+  _cachedParticipantsFuture =
+      loadParticipantNamesFromAsset(assetPath: assetPath);
+  return _cachedParticipantsFuture!;
+}
+
+// Cache do core — reutilizado entre slides do mesmo PPTX
+moodle_quiz.QuizCore? _cachedQuizCore;
+String? _cachedCoreKey; // chave = participants_path
+
 class QuizSlideHost extends StatefulWidget {
   final QuizSlideInvocation invocation;
   final SlideData slide;
+  final int slideDisplayIndex;
 
   const QuizSlideHost({
     super.key,
     required this.invocation,
     required this.slide,
+    this.slideDisplayIndex = 0,
   });
 
   @override
@@ -44,9 +65,9 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
       quizName: initialQuizName,
     );
 
-    final participantNames = await loadParticipantNamesFromAsset(
-      assetPath: participantsAssetPath,
-    );
+    // Participantes: lidos apenas uma vez, cacheados por asset path
+    final participantNames =
+        await _loadParticipantsCached(participantsAssetPath);
     final students = List<moodle_quiz.StudentEntity>.generate(
       participantNames.length,
       (index) => moodle_quiz.StudentEntity(
@@ -55,14 +76,14 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
       ),
     );
 
-    // Monta o mapa de configuração a partir das opções do slide,
-    // forçando offline e single-question como padrões deste host.
     final configMap = <String, dynamic>{
       ...widget.invocation.options,
       'mode': 'offline',
       'navigation_mode': 'single',
       'initial_quiz_name': initialQuizName,
       'embedded_in_presentation': true,
+      if (widget.slideDisplayIndex > 0)
+        'slide_display_index': widget.slideDisplayIndex,
     };
 
     final runtimeConfig = moodle_quiz.QuizRuntimeConfig.fromMap(
@@ -73,10 +94,28 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
       questions: questionPayload.questions,
     );
 
-    final core = await moodle_quiz_factory.buildCoreFromConfig(runtimeConfig);
+    // Core: construído apenas uma vez por participants path, cacheado
+    final coreKey = participantsAssetPath;
+    if (_cachedQuizCore == null || _cachedCoreKey != coreKey) {
+      _cachedCoreKey = coreKey;
+      _cachedQuizCore = await moodle_quiz_factory.buildCoreFromConfig(
+        // Core sem dados de slide — questões e alunos são passados por slide
+        runtimeConfig.copyWith(quizzes: const [], questions: const []),
+      );
+    }
+    final core = _cachedQuizCore!;
+
+    // Repositório de quiz: criado por slide com as questões corretas
+    final stateService = moodle_quiz.QuizStateService();
+    final quizRepo = moodle_quiz.buildInMemoryQuizRepo(
+      config: runtimeConfig,
+      stateService: stateService,
+    );
 
     return core.createQuizScreen(
       questionMap: questionPayload.initialQuestionMap,
+      quizRepository: quizRepo,
+      stateService: stateService,
     );
   }
 
