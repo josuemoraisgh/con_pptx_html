@@ -8,24 +8,29 @@ import '../services/quiz_slide_question_builder.dart';
 import '../models/pptx_models.dart';
 import '../utils/quiz_slide_detector.dart';
 
-// Cache de participantes — evita reler o xlsx a cada slide
-Future<List<String>>? _cachedParticipantsFuture;
+// ── Caches de módulo ───────────────────────────────────────────────────────────
+// Participantes: lista resolvida (não o Future) — retentativa automática se vazio.
+List<String>? _cachedParticipants;
 String? _cachedParticipantsPath;
 
-Future<List<String>> _loadParticipantsCached(String assetPath) {
-  if (_cachedParticipantsFuture != null &&
-      _cachedParticipantsPath == assetPath) {
-    return _cachedParticipantsFuture!;
+Future<List<String>> _loadParticipantsCached(String assetPath) async {
+  if (_cachedParticipants != null && _cachedParticipantsPath == assetPath) {
+    return _cachedParticipants!;
   }
-  _cachedParticipantsPath = assetPath;
-  _cachedParticipantsFuture =
-      loadParticipantNamesFromAsset(assetPath: assetPath);
-  return _cachedParticipantsFuture!;
+  final result = await loadParticipantNamesFromAsset(assetPath: assetPath);
+  // Só cacheia em sucesso — resultado vazio/erro é retentado na próxima chamada.
+  if (result.isNotEmpty) {
+    _cachedParticipantsPath = assetPath;
+    _cachedParticipants = result;
+  }
+  return result;
 }
 
-// Cache do core — reutilizado entre slides do mesmo PPTX
+// Core: construído uma vez por presentations path; reutilizado entre slides.
 moodle_quiz.QuizCore? _cachedQuizCore;
-String? _cachedCoreKey; // chave = participants_path
+String? _cachedCoreKey;
+
+// ── Widget ─────────────────────────────────────────────────────────────────────
 
 class QuizSlideHost extends StatefulWidget {
   final QuizSlideInvocation invocation;
@@ -65,9 +70,8 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
       quizName: initialQuizName,
     );
 
-    // Participantes: lidos apenas uma vez, cacheados por asset path
-    final participantNames =
-        await _loadParticipantsCached(participantsAssetPath);
+    // Participantes: lidos e cacheados na primeira carga com sucesso.
+    final participantNames = await _loadParticipantsCached(participantsAssetPath);
     final students = List<moodle_quiz.StudentEntity>.generate(
       participantNames.length,
       (index) => moodle_quiz.StudentEntity(
@@ -82,30 +86,30 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
       'navigation_mode': 'single',
       'initial_quiz_name': initialQuizName,
       'embedded_in_presentation': true,
+      // Garante que o router arranque em /guest/question e não em /login.
+      'single_question_by_dependency': true,
       if (widget.slideDisplayIndex > 0)
         'slide_display_index': widget.slideDisplayIndex,
     };
 
-    final runtimeConfig = moodle_quiz.QuizRuntimeConfig.fromMap(
-      configMap,
-    ).copyWith(
-      students: students,
-      quizzes: questionPayload.quizzes,
-      questions: questionPayload.questions,
-    );
+    final runtimeConfig = moodle_quiz.QuizRuntimeConfig.fromMap(configMap)
+        .copyWith(
+          students: students,
+          quizzes: questionPayload.quizzes,
+          questions: questionPayload.questions,
+        );
 
-    // Core: construído apenas uma vez por participants path, cacheado
+    // Core: uma única instância por participants path; cacheia sem dados de slide.
     final coreKey = participantsAssetPath;
     if (_cachedQuizCore == null || _cachedCoreKey != coreKey) {
       _cachedCoreKey = coreKey;
       _cachedQuizCore = await moodle_quiz_factory.buildCoreFromConfig(
-        // Core sem dados de slide — questões e alunos são passados por slide
         runtimeConfig.copyWith(quizzes: const [], questions: const []),
       );
     }
     final core = _cachedQuizCore!;
 
-    // Repositório de quiz: criado por slide com as questões corretas
+    // Repositório: criado por slide com as questões corretas do slide atual.
     final stateService = moodle_quiz.QuizStateService();
     final quizRepo = moodle_quiz.buildInMemoryQuizRepo(
       config: runtimeConfig,
@@ -114,9 +118,13 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
 
     return core.createQuizScreen(
       questionMap: questionPayload.initialQuestionMap,
+      // Passa quizzes/questions explicitamente para evitar fallback ao
+      // baseConfig vazio do core cacheado.
+      quizzes: questionPayload.quizzes,
+      questions: questionPayload.questions,
       quizRepository: quizRepo,
       stateService: stateService,
-      // Passa por-chamada para não depender do baseConfig do core cacheado
+      // Overrides por-chamada — independentes do baseConfig cacheado.
       slideDisplayIndex:
           widget.slideDisplayIndex > 0 ? widget.slideDisplayIndex : null,
       embeddedInPresentation: true,
@@ -152,6 +160,8 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
   }
 }
 
+// ── Placeholder (usado nas miniaturas do viewer) ───────────────────────────────
+
 class QuizSlidePlaceholder extends StatelessWidget {
   const QuizSlidePlaceholder({super.key});
 
@@ -165,6 +175,8 @@ class QuizSlidePlaceholder extends StatelessWidget {
     );
   }
 }
+
+// ── Mensagem de estado ─────────────────────────────────────────────────────────
 
 class _QuizSlideMessage extends StatelessWidget {
   final IconData icon;

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -19,11 +20,36 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 
+def _get_lan_ips() -> list[str]:
+    """Retorna IPs de rede local (exclui loopback)."""
+    ips: list[str] = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                ips.append(ip)
+    except Exception:
+        pass
+    # Fallback: conecta a DNS do Google sem enviar dados
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+    return list(dict.fromkeys(ips))  # preserva ordem, remove duplicatas
+
+
 def _json_response(handler: SimpleHTTPRequestHandler, status: int, payload: dict) -> None:
     body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
+    # Permite que o Flutter web (COEP: require-corp) consuma respostas da API.
+    handler.send_header("Cross-Origin-Resource-Policy", "same-site")
+    handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -66,6 +92,9 @@ class LocalWebSqliteHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/health":
             return self._handle_health()
+
+        if parsed.path == "/api/info":
+            return self._handle_info()
 
         if parsed.path == "/api/kv":
             return self._handle_get_kv(parsed.query)
@@ -126,6 +155,20 @@ class LocalWebSqliteHandler(SimpleHTTPRequestHandler):
                 "server_time_utc": datetime.now(timezone.utc).isoformat(),
                 "sqlite_version": row[0],
                 "kv_rows": total,
+            },
+        )
+
+    def _handle_info(self) -> None:
+        """Retorna IPs de rede da máquina — usado pelo Flutter para montar o QR code."""
+        lan_ips = _get_lan_ips()
+        port = self.server.server_address[1]
+        _json_response(
+            self,
+            HTTPStatus.OK,
+            {
+                "port": port,
+                "lan_ips": lan_ips,
+                "urls": [f"http://{ip}:{port}" for ip in lan_ips],
             },
         )
 
@@ -277,11 +320,15 @@ def main() -> None:
     db_lock = threading.Lock()
 
     handler = partial(LocalWebSqliteHandler, directory=str(web_dir), db=db, db_lock=db_lock)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
+    server = ThreadingHTTPServer(("0.0.0.0", args.port), handler)
 
+    lan_ips = _get_lan_ips()
     print("Servidor pronto")
-    print(f"  App:    http://127.0.0.1:{args.port}")
+    print(f"  Local:  http://127.0.0.1:{args.port}")
+    for ip in lan_ips:
+        print(f"  Rede:   http://{ip}:{args.port}  ← use este IP no QR code")
     print(f"  Health: http://127.0.0.1:{args.port}/api/health")
+    print(f"  Info:   http://127.0.0.1:{args.port}/api/info")
     print(f"  SQLite: {db_path}")
 
     try:

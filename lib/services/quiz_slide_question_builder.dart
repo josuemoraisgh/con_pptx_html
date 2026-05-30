@@ -52,8 +52,8 @@ QuizSlideQuestionPayload buildQuizPayloadFromSlide({
     }
   }
 
-  // Detecta JSON no formato QuestionSerializer (text + choices).
-  // Permite que slides com JSON embutido sejam interpretados diretamente.
+  // Detecta JSON no schema canônico v2 do QuestionSerializer.
+  // Slides com JSON embutido fora do schema v2 não são aceitos.
   final jsonQ = _tryParseJsonQuestion(lines);
   if (jsonQ != null) {
     final quiz =
@@ -139,12 +139,16 @@ QuizSlideQuestionPayload buildQuizPayloadFromSlide({
 
 moodle_quiz.QuestionEntity? _tryParseJsonQuestion(List<String> lines) {
   final joined = lines.join('\n');
-  if (!joined.contains('"text"') || !joined.contains('"choices"')) return null;
+  if (!joined.contains('"schema_version"') || !joined.contains('"prompt"')) {
+    return null;
+  }
   final match = RegExp(r'\{[\s\S]+\}').firstMatch(joined);
   if (match == null) return null;
   try {
     final decoded = jsonDecode(match.group(0)!) as Map<String, dynamic>;
-    if (decoded['text'] == null || decoded['choices'] == null) return null;
+    if (decoded['schema_version'] != 2 || decoded['prompt'] == null) {
+      return null;
+    }
     return QuestionSerializer.fromJson(decoded);
   } catch (_) {
     return null;

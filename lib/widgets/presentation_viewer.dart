@@ -4,6 +4,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:moodle_quiz_dep/core/utils/quiz_nav_notifier.dart';
+
 import '../models/pptx_models.dart';
 import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
@@ -680,45 +682,58 @@ class _PresentationViewerState extends State<PresentationViewer>
   // ── Controles superiores ──────────────────────────────────────────────────
 
   Widget _buildTopControls(PresentationData pres) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.10),
-              width: 0.5,
+    return ValueListenableBuilder<VoidCallback?>(
+      valueListenable: quizLoginNotifier,
+      builder: (context, loginCallback, _) {
+        final showLogin = _currentSlideIsQuiz && loginCallback != null;
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.10),
+                  width: 0.5,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (showLogin)
+                    _ControlBtn(
+                      icon: Icons.login_rounded,
+                      tooltip: 'Fazer login no quiz',
+                      onTap: loginCallback,
+                    ),
+                  _ControlBtn(
+                    icon: _showThumbnails
+                        ? Icons.view_sidebar
+                        : Icons.view_sidebar_outlined,
+                    tooltip: 'Painel de miniaturas',
+                    onTap: () =>
+                        setState(() => _showThumbnails = !_showThumbnails),
+                  ),
+                  _ControlBtn(
+                    icon: Icons.fullscreen,
+                    tooltip: 'Tela cheia (F5)',
+                    onTap: _enterFullScreen,
+                  ),
+                  if (PresenterChannel.hasMultipleScreens)
+                    _ControlBtn(
+                      icon: Icons.present_to_all_outlined,
+                      tooltip: 'Modo apresentador',
+                      onTap: _enterPresenterMode,
+                    ),
+                ],
+              ),
             ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _ControlBtn(
-                icon: _showThumbnails
-                    ? Icons.view_sidebar
-                    : Icons.view_sidebar_outlined,
-                tooltip: 'Painel de miniaturas',
-                onTap: () => setState(() => _showThumbnails = !_showThumbnails),
-              ),
-              _ControlBtn(
-                icon: Icons.fullscreen,
-                tooltip: 'Tela cheia (F5)',
-                onTap: _enterFullScreen,
-              ),
-              if (PresenterChannel.hasMultipleScreens)
-                _ControlBtn(
-                  icon: Icons.present_to_all_outlined,
-                  tooltip: 'Modo apresentador',
-                  onTap: _enterPresenterMode,
-                ),
-            ],
-          ),
-        ),
-      ),
+        );
+      },
     );
   }
 
