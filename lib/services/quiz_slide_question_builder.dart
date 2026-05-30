@@ -56,8 +56,11 @@ QuizSlideQuestionPayload buildQuizPayloadFromSlide({
   // Slides com JSON embutido fora do schema v2 não são aceitos.
   final jsonQ = _tryParseJsonQuestion(lines);
   if (jsonQ != null) {
-    final quiz =
-        moodle_quiz.LocalQuizEntity(id: 1, name: quizName, questions: [jsonQ]);
+    final quiz = moodle_quiz.LocalQuizEntity(
+      id: 1,
+      name: quizName,
+      questions: [jsonQ],
+    );
     return QuizSlideQuestionPayload(
       quizzes: [quiz],
       questions: [jsonQ],
