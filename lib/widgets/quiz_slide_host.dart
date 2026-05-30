@@ -62,6 +62,7 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
       'mode': 'offline',
       'navigation_mode': 'single',
       'initial_quiz_name': initialQuizName,
+      'embedded_in_presentation': true,
     };
 
     final runtimeConfig = moodle_quiz.QuizRuntimeConfig.fromMap(

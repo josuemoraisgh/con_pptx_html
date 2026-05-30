@@ -740,29 +740,32 @@ class _PresentationViewerState extends State<PresentationViewer>
           backgroundColor: Colors.black,
           body: Stack(
             children: [
-              Center(
-                child: AspectRatio(
-                  aspectRatio: pres.canvasWidth / pres.canvasHeight,
-                  child: FittedBox(
-                    fit: BoxFit.contain,
-                    child: SizedBox(
-                      width: pres.canvasWidth,
-                      height: pres.canvasHeight,
-                      child: quizInvocation != null
-                          ? QuizSlideHost(
-                              invocation: quizInvocation,
-                              slide: slide,
-                            )
-                          : SlideRenderer(
-                              slide: slide,
-                              presentation: pres,
-                              visibleIds: visibleIds,
-                              animStep: _animStep,
-                            ),
+              if (quizInvocation != null)
+                Positioned.fill(
+                  child: QuizSlideHost(
+                    invocation: quizInvocation,
+                    slide: slide,
+                  ),
+                )
+              else
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: pres.canvasWidth / pres.canvasHeight,
+                    child: FittedBox(
+                      fit: BoxFit.contain,
+                      child: SizedBox(
+                        width: pres.canvasWidth,
+                        height: pres.canvasHeight,
+                        child: SlideRenderer(
+                          slide: slide,
+                          presentation: pres,
+                          visibleIds: visibleIds,
+                          animStep: _animStep,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
               Positioned(
                 top: 8,
                 right: 8,
@@ -952,48 +955,52 @@ class _PresentationViewerState extends State<PresentationViewer>
   }) {
     final slide = pres.slides[index];
     final quizInvocation = extractQuizInvocation(slide);
+
+    // Quiz ocupa 100% da área — sem padding, sem aspecto fixo.
+    if (quizInvocation != null) {
+      return SizedBox.expand(
+        key: key,
+        child: QuizSlideHost(invocation: quizInvocation, slide: slide),
+      );
+    }
+
     final visibleIds = _buildVisibleIds(
       slide,
       index == _currentIndex ? _animStep : 999,
     );
     return Center(
       key: key,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: AspectRatio(
-          aspectRatio: pres.canvasWidth / pres.canvasHeight,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(4),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.7),
-                  blurRadius: 60,
-                  offset: const Offset(0, 24),
-                  spreadRadius: -8,
-                ),
-                BoxShadow(
-                  color: _accent.withValues(alpha: 0.12),
-                  blurRadius: 70,
-                  spreadRadius: -4,
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: FittedBox(
-                fit: BoxFit.contain,
-                child: SizedBox(
-                  width: pres.canvasWidth,
-                  height: pres.canvasHeight,
-                  child: quizInvocation != null
-                      ? QuizSlideHost(invocation: quizInvocation, slide: slide)
-                      : SlideRenderer(
-                          slide: slide,
-                          presentation: pres,
-                          visibleIds: visibleIds,
-                          animStep: index == _currentIndex ? _animStep : 999,
-                        ),
+      child: AspectRatio(
+        aspectRatio: pres.canvasWidth / pres.canvasHeight,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.7),
+                blurRadius: 60,
+                offset: const Offset(0, 24),
+                spreadRadius: -8,
+              ),
+              BoxShadow(
+                color: _accent.withValues(alpha: 0.12),
+                blurRadius: 70,
+                spreadRadius: -4,
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: FittedBox(
+              fit: BoxFit.contain,
+              child: SizedBox(
+                width: pres.canvasWidth,
+                height: pres.canvasHeight,
+                child: SlideRenderer(
+                  slide: slide,
+                  presentation: pres,
+                  visibleIds: visibleIds,
+                  animStep: index == _currentIndex ? _animStep : 999,
                 ),
               ),
             ),
