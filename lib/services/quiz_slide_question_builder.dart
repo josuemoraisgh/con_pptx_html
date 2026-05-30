@@ -52,8 +52,7 @@ QuizSlideQuestionPayload buildQuizPayloadFromSlide({
     }
   }
 
-  // Detecta JSON no schema canônico v2 do QuestionSerializer.
-  // Slides com JSON embutido fora do schema v2 não são aceitos.
+  // Detecta JSON no schema canônico v3 (ou v2 legado) do QuestionSerializer.
   final jsonQ = _tryParseJsonQuestion(lines);
   if (jsonQ != null) {
     final quiz = moodle_quiz.LocalQuizEntity(
@@ -142,16 +141,17 @@ QuizSlideQuestionPayload buildQuizPayloadFromSlide({
 
 moodle_quiz.QuestionEntity? _tryParseJsonQuestion(List<String> lines) {
   final joined = lines.join('\n');
-  if (!joined.contains('"schema_version"') || !joined.contains('"prompt"')) {
-    return null;
-  }
+  // Aceita schema v3 ("v" + "html") e schema v2 legado ("schema_version" + "prompt").
+  final isV3 = joined.contains('"v"') && joined.contains('"html"');
+  final isV2 = joined.contains('"schema_version"') && joined.contains('"prompt"');
+  if (!isV3 && !isV2) return null;
+
   final match = RegExp(r'\{[\s\S]+\}').firstMatch(joined);
   if (match == null) return null;
   try {
     final decoded = jsonDecode(match.group(0)!) as Map<String, dynamic>;
-    if (decoded['schema_version'] != 2 || decoded['prompt'] == null) {
-      return null;
-    }
+    final version = decoded['v'] ?? decoded['schema_version'];
+    if (version != 3 && version != 2) return null;
     return QuestionSerializer.fromJson(decoded);
   } catch (_) {
     return null;

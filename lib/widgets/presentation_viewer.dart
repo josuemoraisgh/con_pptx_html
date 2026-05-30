@@ -488,15 +488,33 @@ class _PresentationViewerState extends State<PresentationViewer>
               if (!_isFullScreen)
                 Positioned(top: 8, right: 8, child: _buildTopControls(pres)),
 
-              // 7. Botão sair tela cheia
+              // 7. Botão sair tela cheia + login (em fullscreen)
               if (_isFullScreen)
                 Positioned(
                   top: 8,
                   right: 8,
-                  child: _HoverButton(
-                    icon: Icons.fullscreen_exit,
-                    tooltip: 'Sair tela cheia',
-                    onTap: _exitFullScreen,
+                  child: ValueListenableBuilder<VoidCallback?>(
+                    valueListenable: quizLoginNotifier,
+                    builder: (context, loginCallback, _) {
+                      final showLogin =
+                          _currentSlideIsQuiz && loginCallback != null;
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (showLogin)
+                            _HoverButton(
+                              icon: Icons.login_rounded,
+                              tooltip: 'Fazer login no quiz',
+                              onTap: loginCallback,
+                            ),
+                          _HoverButton(
+                            icon: Icons.fullscreen_exit,
+                            tooltip: 'Sair tela cheia',
+                            onTap: _exitFullScreen,
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
             ],
