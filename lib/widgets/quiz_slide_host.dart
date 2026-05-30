@@ -116,6 +116,10 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
       questionMap: questionPayload.initialQuestionMap,
       quizRepository: quizRepo,
       stateService: stateService,
+      // Passa por-chamada para não depender do baseConfig do core cacheado
+      slideDisplayIndex:
+          widget.slideDisplayIndex > 0 ? widget.slideDisplayIndex : null,
+      embeddedInPresentation: true,
     );
   }
 
