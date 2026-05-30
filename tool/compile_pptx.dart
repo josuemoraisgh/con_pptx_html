@@ -22,10 +22,20 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('Compile PPTX to Dart', () async {
-    final envPptx = Platform.environment['PPTX_INPUT'];
+    // Prioridade: --dart-define > env var > .pptx_source > fallback
     const dartPptx = String.fromEnvironment('PPTX_INPUT');
-    final pptxPath = envPptx ??
-        (dartPptx.isNotEmpty ? dartPptx : 'assets/presentation.pptx');
+    final envPptx = Platform.environment['PPTX_INPUT'];
+    final sourcePptx = () {
+      final f = File('.pptx_source');
+      if (f.existsSync()) {
+        final v = f.readAsStringSync().trim();
+        if (v.isNotEmpty) return v;
+      }
+      return null;
+    }();
+    final pptxPath = dartPptx.isNotEmpty
+        ? dartPptx
+        : envPptx ?? sourcePptx ?? 'assets/presentation.pptx';
 
     final outPath = Platform.environment['DART_OUTPUT'] ??
         'lib/generated/presentation_data.g.dart';

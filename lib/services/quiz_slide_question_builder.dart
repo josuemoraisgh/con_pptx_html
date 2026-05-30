@@ -52,6 +52,19 @@ QuizSlideQuestionPayload buildQuizPayloadFromSlide({
     }
   }
 
+  // Detecta JSON no formato QuestionSerializer (text + choices).
+  // Permite que slides com JSON embutido sejam interpretados diretamente.
+  final jsonQ = _tryParseJsonQuestion(lines);
+  if (jsonQ != null) {
+    final quiz =
+        moodle_quiz.LocalQuizEntity(id: 1, name: quizName, questions: [jsonQ]);
+    return QuizSlideQuestionPayload(
+      quizzes: [quiz],
+      questions: [jsonQ],
+      initialQuestionMap: QuestionSerializer.toJson(jsonQ),
+    );
+  }
+
   final draftQuestions = _parseDraftQuestions(lines);
 
   if (draftQuestions.isEmpty) {
@@ -122,6 +135,20 @@ QuizSlideQuestionPayload buildQuizPayloadFromSlide({
         ? QuestionSerializer.toJson(questions.first)
         : null,
   );
+}
+
+moodle_quiz.QuestionEntity? _tryParseJsonQuestion(List<String> lines) {
+  final joined = lines.join('\n');
+  if (!joined.contains('"text"') || !joined.contains('"choices"')) return null;
+  final match = RegExp(r'\{[\s\S]+\}').firstMatch(joined);
+  if (match == null) return null;
+  try {
+    final decoded = jsonDecode(match.group(0)!) as Map<String, dynamic>;
+    if (decoded['text'] == null || decoded['choices'] == null) return null;
+    return QuestionSerializer.fromJson(decoded);
+  } catch (_) {
+    return null;
+  }
 }
 
 List<moodle_quiz.QuestionEntity> _tryParseMoodleXml(String xmlContent) {

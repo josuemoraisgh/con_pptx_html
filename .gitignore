@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Caminho local do PPTX ativo (gerado por prepare_pptx.ps1 / build_web_pptx.ps1)
+.pptx_source
+/local/

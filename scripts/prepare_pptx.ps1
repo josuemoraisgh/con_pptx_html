@@ -63,12 +63,18 @@ Copy-Item -Path $PptxPath -Destination $destination -Force
 $sizeKB = [int]((Get-Item $destination).Length / 1024)
 Write-Host "  OK: $sizeKB KB copiados"
 
+# Salva o caminho original em .pptx_source para que build_web_pptx.ps1
+# saiba qual PPTX é o ativo sem precisar de -PptxPath.
+$sourceFile = Join-Path $projectRoot ".pptx_source"
+Set-Content -Path $sourceFile -Value $PptxPath -Encoding UTF8
+Write-Host "  .pptx_source atualizado: $PptxPath"
+
 Write-Host ""
 Write-Host "→ Gerando lib/generated/presentation_data.g.dart"
 Push-Location $projectRoot
 try {
-    $env:PPTX_INPUT = "assets/presentation.pptx"
-    flutter test tool/compile_pptx.dart
+    $env:PPTX_INPUT = $PptxPath
+    flutter test tool/compile_pptx.dart "--dart-define=PPTX_INPUT=$PptxPath"
     if ($LASTEXITCODE -ne 0) { throw "compilacao do PPTX falhou (exit $LASTEXITCODE)" }
 } finally {
     Remove-Item Env:\PPTX_INPUT -ErrorAction SilentlyContinue
