@@ -65,6 +65,10 @@ class _PresentationViewerState extends State<PresentationViewer>
   bool _isPresenterMode = false;
   bool _swapped = false;
   bool _isAudienceFullScreen = false;
+
+  /// True se a apresentação contém ao menos um slide de quiz.
+  /// Calculado uma vez em initState — usado para ativar o overlay de auth.
+  late final bool _hasQuizSlides;
   PresenterChannel? _channel;
   StreamSubscription<PresenterMessage>? _channelSub;
   browser.AudienceWindowHandle? _audienceWindow;
@@ -92,6 +96,14 @@ class _PresentationViewerState extends State<PresentationViewer>
     _currentIndex = startIndex.clamp(0, maxIndex);
     _animStep = persisted?.animStep ?? 0;
 
+    // Verifica se a apresentação tem slides de quiz (calculado uma vez).
+    _hasQuizSlides = widget.presentation.slides.any(slideHasQuizAltText);
+
+    // Se já começa num slide de quiz, ativa o takeover antes do primeiro build.
+    if (slideHasQuizAltText(widget.presentation.slides[_currentIndex])) {
+      quizNeedsFullscreenNotifier.value = true;
+    }
+
     _bgCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1100),
@@ -113,7 +125,21 @@ class _PresentationViewerState extends State<PresentationViewer>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _focusNode.requestFocus();
     });
+
+    // Reage a mudanças de auth para rebuildizar quando o overlay muda.
+    quizGlobalUserNotifier.addListener(_onQuizAuthChanged);
+    quizNeedsFullscreenNotifier.addListener(_onQuizAuthChanged);
   }
+
+  void _onQuizAuthChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Modo takeover: quiz toma toda a tela — sem thumbnails, setas ou chrome.
+  /// Ativado quando o slide atual é quiz E o widget de quiz sinalizou que
+  /// precisa de tela cheia (login pendente ou aluno no fluxo de questão).
+  bool get _isQuizTakeover =>
+      _currentSlideIsQuiz && quizNeedsFullscreenNotifier.value;
 
   void _rebuildAnims() {
     _cornerAnim = CurvedAnimation(
@@ -147,6 +173,8 @@ class _PresentationViewerState extends State<PresentationViewer>
 
   @override
   void dispose() {
+    quizGlobalUserNotifier.removeListener(_onQuizAuthChanged);
+    quizNeedsFullscreenNotifier.removeListener(_onQuizAuthChanged);
     _channelSub?.cancel();
     _channel?.dispose();
     _focusNode.dispose();
@@ -238,6 +266,12 @@ class _PresentationViewerState extends State<PresentationViewer>
   void _goTo(int index, {bool forward = true}) {
     final total = widget.presentation.slides.length;
     if (index < 0 || index >= total) return;
+    // Pré-ativa o takeover antes do build para evitar flash de 1 frame:
+    // initState do filho roda APÓS o build do pai retornar, mas o getter
+    // _isQuizTakeover já é avaliado durante esse build.
+    if (slideHasQuizAltText(widget.presentation.slides[index])) {
+      quizNeedsFullscreenNotifier.value = true;
+    }
     setState(() {
       _forward = forward;
       _currentIndex = index;
@@ -367,7 +401,10 @@ class _PresentationViewerState extends State<PresentationViewer>
 
   void _onKey(KeyEvent event) {
     if (event is! KeyDownEvent) return;
-    if (_currentSlideIsQuiz) return;
+    // Em slides de quiz o widget de quiz absorve eventos de teclado quando tem
+    // foco (campos de texto, etc.). Removemos o bloqueio total para que setas
+    // e atalhos funcionem quando o foco retorna ao viewer (ex: clicar fora
+    // dos campos). O quiz continua consumindo quando seus elementos estão ativos.
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowRight:
       case LogicalKeyboardKey.arrowDown:
@@ -406,6 +443,15 @@ class _PresentationViewerState extends State<PresentationViewer>
       );
     }
 
+    // Overlay de autenticação — bloqueia TODA a apresentação até o login.
+    // Ativado somente quando a apresentação contém slides de quiz.
+    if (_hasQuizSlides) {
+      final user = quizGlobalUserNotifier.value;
+      if (user == null || user.isStudent) {
+        return QuizAuthOverlay(slides: widget.presentation.slides);
+      }
+    }
+
     if (_isPresenterMode && !_swapped) {
       return PresenterPanel(
         presentation: widget.presentation,
@@ -442,54 +488,106 @@ class _PresentationViewerState extends State<PresentationViewer>
               _buildGlows(),
 
               // 3. Conteúdo principal
-              _isFullScreen
-                  ? _buildSlideArea(pres)
-                  : LayoutBuilder(
-                      builder: (ctx, constraints) {
-                        if (!_showThumbnails) {
-                          return _buildSlideArea(pres);
-                        }
-                        final tw = _thumbWidth.clamp(
-                          100.0,
-                          constraints.maxWidth * 0.5,
-                        );
-                        return Row(
-                          children: [
-                            SizedBox(
-                              width: tw,
-                              child: _buildThumbnailPanel(pres),
-                            ),
-                            _ThumbnailResizeHandle(
-                              onDelta: (dx) => setState(() {
-                                _thumbWidth = (_thumbWidth + dx).clamp(
-                                  100.0,
-                                  constraints.maxWidth * 0.5,
-                                );
-                              }),
-                            ),
-                            Expanded(child: _buildSlideArea(pres)),
-                          ],
-                        );
-                      },
-                    ),
+              if (_isQuizTakeover)
+                // Modo takeover: quiz ocupa 100% sem thumbnails e sem setas.
+                _buildSlideArea(pres, hideNavButtons: true)
+              else if (_isFullScreen)
+                _buildSlideArea(pres)
+              else
+                LayoutBuilder(
+                  builder: (ctx, constraints) {
+                    if (!_showThumbnails) {
+                      return _buildSlideArea(pres);
+                    }
+                    final tw = _thumbWidth.clamp(
+                      100.0,
+                      constraints.maxWidth * 0.5,
+                    );
+                    return Row(
+                      children: [
+                        SizedBox(
+                          width: tw,
+                          child: _buildThumbnailPanel(pres),
+                        ),
+                        _ThumbnailResizeHandle(
+                          onDelta: (dx) => setState(() {
+                            _thumbWidth = (_thumbWidth + dx).clamp(
+                              100.0,
+                              constraints.maxWidth * 0.5,
+                            );
+                          }),
+                        ),
+                        Expanded(child: _buildSlideArea(pres)),
+                      ],
+                    );
+                  },
+                ),
 
               // 4. Corner accents (identidade visual)
               _buildCornerAccents(),
 
-              // 5. Badge slide N/Total
-              if (!_isFullScreen)
+              // 5. Badge slide N/Total — oculto no takeover
+              if (!_isFullScreen && !_isQuizTakeover)
                 Positioned(
                   top: 16,
                   left: _showThumbnails ? _thumbWidth + 10 : 16,
                   child: _buildBadge(pres),
                 ),
 
-              // 6. Barra de controles superior (direita)
-              if (!_isFullScreen)
+              // 6. Barra de controles — oculta no takeover
+              if (!_isFullScreen && !_isQuizTakeover)
                 Positioned(top: 8, right: 8, child: _buildTopControls(pres)),
 
-              // 7. Botão sair tela cheia + login (em fullscreen)
-              if (_isFullScreen)
+              // 7. Overlay do modo takeover: logout (top-right) + navegação (bottom)
+              if (_isQuizTakeover) ...[
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: ValueListenableBuilder<VoidCallback?>(
+                    valueListenable: quizLogoutNotifier,
+                    builder: (context, logoutCb, _) {
+                      if (logoutCb == null) return const SizedBox.shrink();
+                      return _HoverButton(
+                        icon: Icons.logout_rounded,
+                        tooltip: 'Sair do quiz (Logoff)',
+                        onTap: logoutCb,
+                      );
+                    },
+                  ),
+                ),
+                // Navegação entre slides — sempre disponível no takeover
+                Positioned(
+                  bottom: 10,
+                  left: 0,
+                  right: 0,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (_currentIndex > 0)
+                        _HoverButton(
+                          icon: Icons.chevron_left,
+                          tooltip: 'Slide anterior',
+                          onTap: _retreat,
+                        ),
+                      const SizedBox(width: 4),
+                      _SlideCounter(
+                        current: _currentIndex + 1,
+                        total: widget.presentation.slides.length,
+                      ),
+                      const SizedBox(width: 4),
+                      if (_currentIndex < widget.presentation.slides.length - 1)
+                        _HoverButton(
+                          icon: Icons.chevron_right,
+                          tooltip: 'Próximo slide',
+                          onTap: _advance,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // 8. Botão sair tela cheia + login (em fullscreen normal)
+              if (_isFullScreen && !_isQuizTakeover)
                 Positioned(
                   top: 8,
                   right: 8,
@@ -939,7 +1037,7 @@ class _PresentationViewerState extends State<PresentationViewer>
 
   // ── Área do slide com AnimatedSwitcher + transição referência ─────────────
 
-  Widget _buildSlideArea(PresentationData pres) {
+  Widget _buildSlideArea(PresentationData pres, {bool hideNavButtons = false}) {
     final slide = _currentIndex;
     final fwd = _forward;
     return Stack(
@@ -958,8 +1056,8 @@ class _PresentationViewerState extends State<PresentationViewer>
           ),
         ),
 
-        // Clique esquerda/direita para navegar
-        if (!_currentSlideHasInteractiveCommand)
+        // Clique esquerda/direita para navegar (desativado no takeover)
+        if (!hideNavButtons && !_currentSlideHasInteractiveCommand)
           Positioned.fill(
             child: Row(
               children: [
@@ -985,8 +1083,8 @@ class _PresentationViewerState extends State<PresentationViewer>
             ),
           ),
 
-        // Botão anterior
-        if (_currentIndex > 0 || _animStep > 0)
+        // Botão anterior (oculto no takeover)
+        if (!hideNavButtons && (_currentIndex > 0 || _animStep > 0))
           Positioned(
             left: 8,
             top: 0,
@@ -996,15 +1094,16 @@ class _PresentationViewerState extends State<PresentationViewer>
             ),
           ),
 
-        // Botão próximo
-        Positioned(
-          right: 8,
-          top: 0,
-          bottom: 0,
-          child: Center(
-            child: _NavButton(icon: Icons.chevron_right, onTap: _advance),
+        // Botão próximo (oculto no takeover)
+        if (!hideNavButtons)
+          Positioned(
+            right: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: _NavButton(icon: Icons.chevron_right, onTap: _advance),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -1357,6 +1456,33 @@ class _HoverButtonState extends State<_HoverButton>
             icon: Icon(widget.icon, color: Colors.white),
             onPressed: widget.onTap,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Indicador de slide atual / total — exibido no overlay de takeover.
+class _SlideCounter extends StatelessWidget {
+  final int current;
+  final int total;
+  const _SlideCounter({required this.current, required this.total});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: 0.55,
+      duration: const Duration(milliseconds: 200),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black45,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          '$current / $total',
+          style: const TextStyle(
+              color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
         ),
       ),
     );

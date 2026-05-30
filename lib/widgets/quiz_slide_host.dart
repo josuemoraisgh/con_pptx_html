@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:moodle_quiz_dep/core/bootstrap/default_app_factory.dart'
     as moodle_quiz_factory;
+import 'package:moodle_quiz_dep/core/utils/quiz_nav_notifier.dart';
 import 'package:moodle_quiz_dep/moodle_quiz_dep.dart' as moodle_quiz;
 
 import '../services/participants_service.dart';
@@ -51,6 +52,22 @@ class QuizSlideHost extends StatefulWidget {
 class _QuizSlideHostState extends State<QuizSlideHost> {
   late final Future<Widget> _appFuture = _buildQuizApp();
 
+  @override
+  void initState() {
+    super.initState();
+    // Incrementa contador — seguro mesmo com múltiplas instâncias no AnimatedSwitcher.
+    mountQuizWidget();
+    quizNeedsFullscreenNotifier.value = true;
+  }
+
+  @override
+  void dispose() {
+    // Só zera o notifier quando não restam mais instâncias montadas.
+    final lastInstance = unmountQuizWidget();
+    if (lastInstance) quizNeedsFullscreenNotifier.value = false;
+    super.dispose();
+  }
+
   Future<Widget> _buildQuizApp() async {
     final participantsAssetPath =
         widget.invocation.option(const [
@@ -86,7 +103,7 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
       'navigation_mode': 'single',
       'initial_quiz_name': initialQuizName,
       'embedded_in_presentation': true,
-      // Garante que o router arranque em /guest/question e não em /login.
+      // Exibe uma questão por vez (modo de apresentação embutida).
       'single_question_by_dependency': true,
       if (widget.slideDisplayIndex > 0)
         'slide_display_index': widget.slideDisplayIndex,
@@ -155,6 +172,128 @@ class _QuizSlideHostState extends State<QuizSlideHost> {
         }
 
         return ClipRect(child: app);
+      },
+    );
+  }
+}
+
+// ── Auth overlay global ────────────────────────────────────────────────────────
+
+/// Overlay full-screen exibido ANTES de qualquer slide quando o projeto usa
+/// o core do quiz. Força autenticação antes de qualquer conteúdo ser visível.
+///
+/// • Login pendente → mostra tela de login (do quiz dependency)
+/// • Aluno logado   → permanece aqui mostrando tela de espera
+/// • Prof / Guest   → [PresentationViewer] remove este overlay e exibe a apresentação
+class QuizAuthOverlay extends StatefulWidget {
+  /// Slides da apresentação — usados para encontrar o primeiro slide de quiz
+  /// e reaproveitar a infra (core, participantes) já cacheada.
+  final List<SlideData> slides;
+
+  const QuizAuthOverlay({super.key, required this.slides});
+
+  @override
+  State<QuizAuthOverlay> createState() => _QuizAuthOverlayState();
+}
+
+class _QuizAuthOverlayState extends State<QuizAuthOverlay> {
+  late final Future<Widget> _appFuture = _build();
+
+  Future<Widget> _build() async {
+    // Busca o primeiro slide de quiz para reutilizar a mesma infra (core + server).
+    QuizSlideInvocation? invocation;
+    SlideData? quizSlide;
+    for (final slide in widget.slides) {
+      final inv = extractQuizInvocation(slide);
+      if (inv != null) {
+        invocation = inv;
+        quizSlide = slide;
+        break;
+      }
+    }
+
+    if (invocation == null || quizSlide == null) {
+      // Sem slides de quiz → auto-autentica como convidado e sai.
+      quizGlobalUserNotifier.value = const moodle_quiz.LocalUserEntity(
+        id: -1, name: 'Convidado', isTeacher: false,
+      );
+      return const SizedBox.shrink();
+    }
+
+    final participantsAssetPath = invocation.option(const [
+          'participants_asset',
+          'participants_xlsx',
+          'students_asset',
+          'students_xlsx',
+        ]) ??
+        'assets/participants.xlsx';
+
+    final participantNames =
+        await _loadParticipantsCached(participantsAssetPath);
+    final students = List<moodle_quiz.StudentEntity>.generate(
+      participantNames.length,
+      (i) => moodle_quiz.StudentEntity(id: i + 1, name: participantNames[i]),
+    );
+
+    final configMap = <String, dynamic>{
+      ...invocation.options,
+      'mode': 'offline',
+      'navigation_mode': 'single',
+      'single_question_by_dependency': true,
+      'embedded_in_presentation': true,
+    };
+    final runtimeConfig = moodle_quiz.QuizRuntimeConfig.fromMap(configMap)
+        .copyWith(
+          students: students,
+          quizzes: const [],    // sem questões — só auth
+          questions: const [],
+        );
+
+    // Reutiliza o core cacheado (mesmo servidor, mesma infra dos slides de quiz).
+    final coreKey = participantsAssetPath;
+    if (_cachedQuizCore == null || _cachedCoreKey != coreKey) {
+      _cachedCoreKey = coreKey;
+      _cachedQuizCore = await moodle_quiz_factory.buildCoreFromConfig(
+        runtimeConfig.copyWith(quizzes: const [], questions: const []),
+      );
+    }
+
+    final stateService = moodle_quiz.QuizStateService();
+    final quizRepo = moodle_quiz.buildInMemoryQuizRepo(
+      config: runtimeConfig,
+      stateService: stateService,
+    );
+
+    return _cachedQuizCore!.createQuizScreen(
+      quizzes: const [],
+      questions: const [],
+      quizRepository: quizRepo,
+      stateService: stateService,
+      embeddedInPresentation: true,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: _appFuture,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _QuizSlideMessage(
+            icon: Icons.error_outline,
+            title: 'Erro ao inicializar',
+            subtitle: snapshot.error.toString(),
+          );
+        }
+        if (snapshot.data == null) {
+          return const _QuizSlideMessage(
+            icon: Icons.lock_outline_rounded,
+            title: 'Inicializando autenticação',
+            subtitle: 'Aguarde...',
+            showProgress: true,
+          );
+        }
+        return ClipRect(child: snapshot.data!);
       },
     );
   }
