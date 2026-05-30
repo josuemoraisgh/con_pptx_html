@@ -507,6 +507,20 @@ class _PresentationViewerState extends State<PresentationViewer>
                               tooltip: 'Fazer login no quiz',
                               onTap: loginCallback,
                             ),
+                          ValueListenableBuilder<VoidCallback?>(
+                            valueListenable: quizLogoutNotifier,
+                            builder: (context, logoutCallback, _) {
+                              if (!_currentSlideIsQuiz ||
+                                  logoutCallback == null) {
+                                return const SizedBox.shrink();
+                              }
+                              return _HoverButton(
+                                icon: Icons.logout_rounded,
+                                tooltip: 'Sair do quiz (Logoff)',
+                                onTap: logoutCallback,
+                              );
+                            },
+                          ),
                           _HoverButton(
                             icon: Icons.fullscreen_exit,
                             tooltip: 'Sair tela cheia',
@@ -727,6 +741,19 @@ class _PresentationViewerState extends State<PresentationViewer>
                       tooltip: 'Fazer login no quiz',
                       onTap: loginCallback,
                     ),
+                  ValueListenableBuilder<VoidCallback?>(
+                    valueListenable: quizLogoutNotifier,
+                    builder: (context, logoutCallback, _) {
+                      if (!_currentSlideIsQuiz || logoutCallback == null) {
+                        return const SizedBox.shrink();
+                      }
+                      return _ControlBtn(
+                        icon: Icons.logout_rounded,
+                        tooltip: 'Sair do quiz (Logoff)',
+                        onTap: logoutCallback,
+                      );
+                    },
+                  ),
                   _ControlBtn(
                     icon: _showThumbnails
                         ? Icons.view_sidebar
