@@ -83,6 +83,47 @@ class _PresentationViewerState extends State<PresentationViewer>
 
   final FocusNode _focusNode = FocusNode();
   final ScrollController _thumbScrollController = ScrollController();
+
+  // Handler global de teclado — funciona mesmo quando o quiz tem o foco.
+  bool _handleHardwareKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    // Não intercepta quando um campo de texto está ativo (ex: inputs do quiz).
+    final primary = FocusManager.instance.primaryFocus;
+    final isTextInput = primary?.context?.widget is EditableText;
+    if (isTextInput) return false;
+
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowRight:
+      case LogicalKeyboardKey.arrowDown:
+      case LogicalKeyboardKey.space:
+      case LogicalKeyboardKey.pageDown:
+        _advance();
+        return true;
+      case LogicalKeyboardKey.arrowLeft:
+      case LogicalKeyboardKey.arrowUp:
+      case LogicalKeyboardKey.pageUp:
+        _retreat();
+        return true;
+      case LogicalKeyboardKey.f5:
+        _isFullScreen ? _exitFullScreen() : _enterFullScreen();
+        return true;
+      case LogicalKeyboardKey.escape:
+        if (_isPresenterMode) {
+          _exitPresenterMode();
+        } else if (_isFullScreen) {
+          _exitFullScreen();
+        }
+        return true;
+      case LogicalKeyboardKey.home:
+        _goTo(0);
+        return true;
+      case LogicalKeyboardKey.end:
+        _goTo(widget.presentation.slides.length - 1);
+        return true;
+      default:
+        return false;
+    }
+  }
   DateTime _lastWheelNav = DateTime.fromMillisecondsSinceEpoch(0);
 
   Color get _accent => _kAccents[_currentIndex % _kAccents.length];
@@ -131,6 +172,9 @@ class _PresentationViewerState extends State<PresentationViewer>
     // Reage a mudanças de auth para rebuildizar quando o overlay muda.
     quizGlobalUserNotifier.addListener(_onQuizAuthChanged);
     quizNeedsFullscreenNotifier.addListener(_onQuizAuthChanged);
+
+    // Handler global de teclado — funciona mesmo quando o quiz tem foco.
+    HardwareKeyboard.instance.addHandler(_handleHardwareKey);
   }
 
   void _onQuizAuthChanged() {
@@ -140,11 +184,11 @@ class _PresentationViewerState extends State<PresentationViewer>
     if (mounted) setState(() {});
   }
 
-  /// Modo takeover: quiz toma toda a tela — sem thumbnails, setas ou chrome.
-  /// Ativado quando o slide atual é quiz E o widget de quiz sinalizou que
-  /// precisa de tela cheia (login pendente ou aluno no fluxo de questão).
-  bool get _isQuizTakeover =>
-      _currentSlideIsQuiz && quizNeedsFullscreenNotifier.value;
+  /// Takeover está sempre desativado para o fluxo normal do professor/convidado.
+  /// Login e aluno já são tratados pelo QuizAuthOverlay (retornado antes deste
+  /// getter ser avaliado), então o quiz é sempre exibido no layout normal,
+  /// com miniaturas e chrome da apresentação visíveis.
+  bool get _isQuizTakeover => false;
 
   void _rebuildAnims() {
     _cornerAnim = CurvedAnimation(
@@ -178,6 +222,7 @@ class _PresentationViewerState extends State<PresentationViewer>
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKey);
     quizGlobalUserNotifier.removeListener(_onQuizAuthChanged);
     quizNeedsFullscreenNotifier.removeListener(_onQuizAuthChanged);
     _channelSub?.cancel();
@@ -271,12 +316,6 @@ class _PresentationViewerState extends State<PresentationViewer>
   void _goTo(int index, {bool forward = true}) {
     final total = widget.presentation.slides.length;
     if (index < 0 || index >= total) return;
-    // Pré-ativa o takeover antes do build para evitar flash de 1 frame:
-    // initState do filho roda APÓS o build do pai retornar, mas o getter
-    // _isQuizTakeover já é avaliado durante esse build.
-    if (slideHasQuizAltText(widget.presentation.slides[index])) {
-      quizNeedsFullscreenNotifier.value = true;
-    }
     setState(() {
       _forward = forward;
       _currentIndex = index;
@@ -409,37 +448,6 @@ class _PresentationViewerState extends State<PresentationViewer>
     _sendState();
   }
 
-  void _onKey(KeyEvent event) {
-    if (event is! KeyDownEvent) return;
-    // Em slides de quiz o widget de quiz absorve eventos de teclado quando tem
-    // foco (campos de texto, etc.). Removemos o bloqueio total para que setas
-    // e atalhos funcionem quando o foco retorna ao viewer (ex: clicar fora
-    // dos campos). O quiz continua consumindo quando seus elementos estão ativos.
-    switch (event.logicalKey) {
-      case LogicalKeyboardKey.arrowRight:
-      case LogicalKeyboardKey.arrowDown:
-      case LogicalKeyboardKey.space:
-      case LogicalKeyboardKey.pageDown:
-        _advance();
-      case LogicalKeyboardKey.arrowLeft:
-      case LogicalKeyboardKey.arrowUp:
-      case LogicalKeyboardKey.pageUp:
-        _retreat();
-      case LogicalKeyboardKey.f5:
-        _isFullScreen ? _exitFullScreen() : _enterFullScreen();
-      case LogicalKeyboardKey.escape:
-        if (_isPresenterMode) {
-          _exitPresenterMode();
-        } else if (_isFullScreen) {
-          _exitFullScreen();
-        }
-      case LogicalKeyboardKey.home:
-        _goTo(0);
-      case LogicalKeyboardKey.end:
-        _goTo(widget.presentation.slides.length - 1);
-    }
-  }
-
   // ── Build principal ───────────────────────────────────────────────────────
 
   @override
@@ -485,7 +493,7 @@ class _PresentationViewerState extends State<PresentationViewer>
       child: KeyboardListener(
         focusNode: _focusNode,
         autofocus: true,
-        onKeyEvent: _onKey,
+        onKeyEvent: null, // tratado pelo HardwareKeyboard global
         child: Scaffold(
           backgroundColor: Theme.of(context).brightness == Brightness.dark
               ? Colors.black
@@ -550,36 +558,6 @@ class _PresentationViewerState extends State<PresentationViewer>
                 child: _buildTopControls(pres),
               ),
 
-              // 7. Navegação inferior — só no takeover (setas dentro do quiz)
-              if (_isQuizTakeover)
-                Positioned(
-                  bottom: 10,
-                  left: 0,
-                  right: 0,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (_currentIndex > 0)
-                        _HoverButton(
-                          icon: Icons.chevron_left,
-                          tooltip: 'Slide anterior',
-                          onTap: _retreat,
-                        ),
-                      const SizedBox(width: 4),
-                      _SlideCounter(
-                        current: _currentIndex + 1,
-                        total: widget.presentation.slides.length,
-                      ),
-                      const SizedBox(width: 4),
-                      if (_currentIndex < widget.presentation.slides.length - 1)
-                        _HoverButton(
-                          icon: Icons.chevron_right,
-                          tooltip: 'Próximo slide',
-                          onTap: _advance,
-                        ),
-                    ],
-                  ),
-                ),
             ],
           ),
         ),
@@ -882,7 +860,7 @@ class _PresentationViewerState extends State<PresentationViewer>
       child: KeyboardListener(
         focusNode: _focusNode,
         autofocus: true,
-        onKeyEvent: _onKey,
+        onKeyEvent: null, // tratado pelo HardwareKeyboard global
         child: Scaffold(
           backgroundColor: Colors.black,
           body: Stack(
@@ -1458,35 +1436,6 @@ class _HoverButtonState extends State<_HoverButton>
   }
 }
 
-/// Indicador de slide atual / total — exibido no overlay de takeover.
-class _SlideCounter extends StatelessWidget {
-  final int current;
-  final int total;
-  const _SlideCounter({required this.current, required this.total});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedOpacity(
-      opacity: 0.55,
-      duration: const Duration(milliseconds: 200),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.black45,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          '$current / $total',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Botão de navegação prev/next
