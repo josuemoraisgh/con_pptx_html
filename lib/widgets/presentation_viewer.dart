@@ -9,6 +9,7 @@ import 'package:moodle_quiz_dep/core/utils/quiz_nav_notifier.dart';
 import '../models/pptx_models.dart';
 import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
+import '../services/quiz_auth_sync.dart';
 import '../utils/animation_visibility.dart';
 import '../utils/deferred_hover_state.dart';
 import '../utils/quiz_slide_detector.dart';
@@ -90,6 +91,7 @@ class _PresentationViewerState extends State<PresentationViewer>
   @override
   void initState() {
     super.initState();
+    hydrateQuizUserFromStorage();
     final maxIndex = widget.presentation.slides.length - 1;
     final persisted = browser.loadViewerState();
     final startIndex = persisted?.slideIndex ?? widget.initialSlide;
@@ -132,6 +134,9 @@ class _PresentationViewerState extends State<PresentationViewer>
   }
 
   void _onQuizAuthChanged() {
+    final user = quizGlobalUserNotifier.value;
+    persistQuizUser(user);
+    _channel?.sendAuth(serializeQuizUser(user));
     if (mounted) setState(() {});
   }
 
@@ -339,6 +344,8 @@ class _PresentationViewerState extends State<PresentationViewer>
       _isPresenterMode = true;
       _swapped = false;
     });
+    _channel?.sendAuth(serializeQuizUser(quizGlobalUserNotifier.value));
+    _sendState();
     Future.delayed(const Duration(milliseconds: 1500), _sendState);
   }
 
@@ -367,6 +374,7 @@ class _PresentationViewerState extends State<PresentationViewer>
 
   void _sendState() {
     browser.saveViewerState(_currentIndex, _animStep);
+    _channel?.sendAuth(serializeQuizUser(quizGlobalUserNotifier.value));
     _channel?.sendState(_currentIndex, _animStep);
   }
 
@@ -382,6 +390,8 @@ class _PresentationViewerState extends State<PresentationViewer>
         } else {
           _retreat();
         }
+      case PresenterAuthMessage(:final user):
+        applyQuizUser(deserializeQuizUser(user));
     }
   }
 
@@ -505,10 +515,7 @@ class _PresentationViewerState extends State<PresentationViewer>
                     );
                     return Row(
                       children: [
-                        SizedBox(
-                          width: tw,
-                          child: _buildThumbnailPanel(pres),
-                        ),
+                        SizedBox(width: tw, child: _buildThumbnailPanel(pres)),
                         _ThumbnailResizeHandle(
                           onDelta: (dx) => setState(() {
                             _thumbWidth = (_thumbWidth + dx).clamp(
@@ -859,6 +866,23 @@ class _PresentationViewerState extends State<PresentationViewer>
                     tooltip: 'Painel de miniaturas',
                     onTap: () =>
                         setState(() => _showThumbnails = !_showThumbnails),
+                  ),
+                  ValueListenableBuilder(
+                    valueListenable: quizThemeModeNotifier,
+                    builder: (context, mode, _) => _ControlBtn(
+                      icon: mode == ThemeMode.dark
+                          ? Icons.light_mode_rounded
+                          : Icons.dark_mode_rounded,
+                      tooltip: mode == ThemeMode.dark
+                          ? 'Tema claro'
+                          : 'Tema escuro',
+                      onTap: () {
+                        quizThemeModeNotifier.value =
+                            mode == ThemeMode.dark
+                                ? ThemeMode.light
+                                : ThemeMode.dark;
+                      },
+                    ),
                   ),
                   _ControlBtn(
                     icon: Icons.fullscreen,
@@ -1482,7 +1506,10 @@ class _SlideCounter extends StatelessWidget {
         child: Text(
           '$current / $total',
           style: const TextStyle(
-              color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ),
     );

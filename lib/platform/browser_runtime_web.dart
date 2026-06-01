@@ -132,6 +132,26 @@ void saveViewerState(int slideIndex, int animStep) {
   }
 }
 
+void setSharedStorageValue(String key, String value) {
+  try {
+    web.window.localStorage.setItem(key, value);
+  } catch (_) {}
+}
+
+String? getSharedStorageValue(String key) {
+  try {
+    return web.window.localStorage.getItem(key);
+  } catch (_) {
+    return null;
+  }
+}
+
+void removeSharedStorageValue(String key) {
+  try {
+    web.window.localStorage.removeItem(key);
+  } catch (_) {}
+}
+
 @JS('__copilotEnsurePyodide')
 external JSPromise<JSAny?> _ensurePyodideJs();
 

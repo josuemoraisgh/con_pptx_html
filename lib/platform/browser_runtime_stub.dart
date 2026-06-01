@@ -32,6 +32,12 @@ void saveViewerState(int slideIndex, int animStep) {}
 
 ({int slideIndex, int animStep})? loadViewerState() => null;
 
+void setSharedStorageValue(String key, String value) {}
+
+String? getSharedStorageValue(String key) => null;
+
+void removeSharedStorageValue(String key) {}
+
 Future<bool> ensurePyodideReady() async => false;
 
 Future<String> runPythonCode(String code) async =>

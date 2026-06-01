@@ -2,10 +2,12 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:moodle_quiz_dep/core/utils/quiz_nav_notifier.dart';
 
 import '../models/pptx_models.dart';
 import '../platform/browser_runtime.dart' as browser;
 import '../services/presenter_channel.dart';
+import '../services/quiz_auth_sync.dart';
 import '../utils/animation_visibility.dart';
 import '../utils/deferred_hover_state.dart';
 import '../utils/quiz_slide_detector.dart';
@@ -37,6 +39,7 @@ class _AudienceScreenState extends State<AudienceScreen> {
   /// true → esta janela exibe o painel do apresentador (após swap)
   bool _swapped = false;
   bool _isFullScreen = false;
+  late final bool _hasQuizSlides;
 
   final FocusNode _focusNode = FocusNode();
   DateTime _lastWheelNav = DateTime.fromMillisecondsSinceEpoch(0);
@@ -44,10 +47,21 @@ class _AudienceScreenState extends State<AudienceScreen> {
   @override
   void initState() {
     super.initState();
+    hydrateQuizUserFromStorage();
+    _hasQuizSlides = widget.presentation.slides.any(slideHasQuizAltText);
     _sub = _channel.messages.listen(_onMessage);
+    quizGlobalUserNotifier.addListener(_onQuizAuthChanged);
+    quizNeedsFullscreenNotifier.addListener(_onQuizAuthChanged);
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _focusNode.requestFocus(),
     );
+  }
+
+  void _onQuizAuthChanged() {
+    final user = quizGlobalUserNotifier.value;
+    persistQuizUser(user);
+    _channel.sendAuth(serializeQuizUser(user));
+    if (mounted) setState(() {});
   }
 
   void _onMessage(PresenterMessage msg) {
@@ -63,11 +77,15 @@ class _AudienceScreenState extends State<AudienceScreen> {
       case PresenterNavigateMessage():
         // Não se aplica aqui (comandos de naveg. vão para a janela controladora)
         break;
+      case PresenterAuthMessage(:final user):
+        applyQuizUser(deserializeQuizUser(user));
     }
   }
 
   @override
   void dispose() {
+    quizGlobalUserNotifier.removeListener(_onQuizAuthChanged);
+    quizNeedsFullscreenNotifier.removeListener(_onQuizAuthChanged);
     _sub?.cancel();
     _channel.dispose();
     _focusNode.dispose();
@@ -139,6 +157,13 @@ class _AudienceScreenState extends State<AudienceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_hasQuizSlides) {
+      final user = quizGlobalUserNotifier.value;
+      if (user == null || user.isStudent) {
+        return QuizAuthOverlay(slides: widget.presentation.slides);
+      }
+    }
+
     // Após swap: esta janela exibe o painel do apresentador (remoto)
     if (_swapped) {
       return PresenterPanel(

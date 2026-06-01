@@ -31,6 +31,12 @@ class PresenterNavigateMessage extends PresenterMessage {
   const PresenterNavigateMessage({required this.advance});
 }
 
+/// Estado atual de autenticação do quiz, compartilhado entre as janelas.
+class PresenterAuthMessage extends PresenterMessage {
+  final Map<String, dynamic>? user;
+  const PresenterAuthMessage({required this.user});
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Canal
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,6 +74,17 @@ class PresenterChannel {
           _controller.add(
             PresenterNavigateMessage(advance: raw['action'] == 'advance'),
           );
+        case 'auth':
+          final user = raw['user'];
+          if (user == null || user is Map<String, dynamic>) {
+            _controller.add(PresenterAuthMessage(user: user));
+          } else if (user is Map) {
+            _controller.add(
+              PresenterAuthMessage(
+                user: user.map((key, value) => MapEntry(key.toString(), value)),
+              ),
+            );
+          }
       }
     } catch (_) {}
   }
@@ -84,6 +101,10 @@ class PresenterChannel {
   void sendNavigate({required bool advance}) {
     _post({'type': 'navigate', 'action': advance ? 'advance' : 'retreat'});
   }
+
+  /// Compartilha o usuário autenticado do quiz entre as janelas.
+  void sendAuth(Map<String, dynamic>? user) =>
+      _post({'type': 'auth', 'user': user});
 
   void _post(Map<String, dynamic> data) {
     _messenger.post(data);
