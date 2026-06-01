@@ -1,9 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:moodle_quiz_dep/core/utils/quiz_nav_notifier.dart';
 
 import 'models/pptx_models.dart';
 import 'screens/setup_screen.dart';
 import 'widgets/presentation_viewer.dart';
+
+// ── Temas do app externo ──────────────────────────────────────────────────────
+
+ThemeData _buildDarkTheme() {
+  return ThemeData.dark().copyWith(
+    colorScheme: const ColorScheme.dark(
+      primary: Color(0xFF00BCD4),
+      secondary: Color(0xFF007AFF),
+      surface: Color(0xFF0A1628),
+      onSurface: Colors.white,
+    ),
+    textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
+    scaffoldBackgroundColor: Colors.black,
+  );
+}
+
+ThemeData _buildLightTheme() {
+  return ThemeData.light().copyWith(
+    colorScheme: const ColorScheme.light(
+      primary: Color(0xFF007AFF),
+      secondary: Color(0xFF00BCD4),
+      surface: Color(0xFFF0F4FF),
+      onSurface: Color(0xFF1A1A2E),
+    ),
+    textTheme: GoogleFonts.interTextTheme(ThemeData.light().textTheme),
+    scaffoldBackgroundColor: const Color(0xFFF0F4FF),
+  );
+}
+
+// ── Widgets ───────────────────────────────────────────────────────────────────
 
 class _ErrorScreen extends StatelessWidget {
   final String error;
@@ -11,8 +42,8 @@ class _ErrorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0F1A),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 800),
@@ -24,10 +55,10 @@ class _ErrorScreen extends StatelessWidget {
               children: [
                 const Icon(Icons.error_outline, color: Colors.red, size: 48),
                 const SizedBox(height: 16),
-                const Text(
+                Text(
                   'Erro ao carregar o PPTX',
                   style: TextStyle(
-                    color: Colors.white,
+                    color: isDark ? Colors.white : const Color(0xFF1A1A2E),
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
@@ -37,7 +68,9 @@ class _ErrorScreen extends StatelessWidget {
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1A1A2E),
+                    color: isDark
+                        ? const Color(0xFF1A1A2E)
+                        : const Color(0xFFFFEEEE),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: Colors.red.withAlpha(80)),
                   ),
@@ -59,35 +92,50 @@ class _ErrorScreen extends StatelessWidget {
   }
 }
 
-class ConPptxHtmlApp extends StatelessWidget {
+/// App raiz — escuta [quizThemeModeNotifier] para aplicar dark/light em TODOS
+/// os slides e na interface de apresentação.
+class ConPptxHtmlApp extends StatefulWidget {
   final PresentationData? presentation;
   final String? parseError;
 
   const ConPptxHtmlApp({super.key, this.presentation, this.parseError});
 
   @override
+  State<ConPptxHtmlApp> createState() => _ConPptxHtmlAppState();
+}
+
+class _ConPptxHtmlAppState extends State<ConPptxHtmlApp> {
+  @override
+  void initState() {
+    super.initState();
+    quizThemeModeNotifier.addListener(_onThemeChanged);
+  }
+
+  @override
+  void dispose() {
+    quizThemeModeNotifier.removeListener(_onThemeChanged);
+    super.dispose();
+  }
+
+  void _onThemeChanged() => setState(() {});
+
+  @override
   Widget build(BuildContext context) {
     final emptyPresentation =
-        presentation != null && presentation!.slides.isEmpty;
+        widget.presentation != null && widget.presentation!.slides.isEmpty;
 
     return MaterialApp(
       title: 'PPTX → Web',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF00BCD4),
-          secondary: Color(0xFF007AFF),
-          surface: Color(0xFF0A1628),
-          onSurface: Colors.white,
-        ),
-        textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
-        scaffoldBackgroundColor: Colors.black,
-      ),
-      home: presentation != null && !emptyPresentation
-          ? PresentationViewer(presentation: presentation!)
-          : parseError != null || emptyPresentation
+      theme: _buildLightTheme(),
+      darkTheme: _buildDarkTheme(),
+      themeMode: quizThemeModeNotifier.value,
+      home: widget.presentation != null && !emptyPresentation
+          ? PresentationViewer(presentation: widget.presentation!)
+          : widget.parseError != null || emptyPresentation
           ? _ErrorScreen(
-              error: parseError ?? 'O PPTX não contém slides renderizáveis.',
+              error: widget.parseError ??
+                  'O PPTX não contém slides renderizáveis.',
             )
           : const SetupScreen(),
     );

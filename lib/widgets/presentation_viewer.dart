@@ -487,7 +487,9 @@ class _PresentationViewerState extends State<PresentationViewer>
         autofocus: true,
         onKeyEvent: _onKey,
         child: Scaffold(
-          backgroundColor: Colors.black,
+          backgroundColor: Theme.of(context).brightness == Brightness.dark
+              ? Colors.black
+              : const Color(0xFFF0F4FF),
           body: Stack(
             fit: StackFit.expand,
             children: [
@@ -533,7 +535,7 @@ class _PresentationViewerState extends State<PresentationViewer>
               // 4. Corner accents (identidade visual)
               _buildCornerAccents(),
 
-              // 5. Badge slide N/Total — oculto no takeover
+              // 5. Badge slide N/Total — oculto no fullscreen e takeover
               if (!_isFullScreen && !_isQuizTakeover)
                 Positioned(
                   top: 16,
@@ -541,28 +543,15 @@ class _PresentationViewerState extends State<PresentationViewer>
                   child: _buildBadge(pres),
                 ),
 
-              // 6. Barra de controles — oculta no takeover
-              if (!_isFullScreen && !_isQuizTakeover)
-                Positioned(top: 8, right: 8, child: _buildTopControls(pres)),
+              // 6. Barra de controles — SEMPRE visível (todos os slides)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: _buildTopControls(pres),
+              ),
 
-              // 7. Overlay do modo takeover: logout (top-right) + navegação (bottom)
-              if (_isQuizTakeover) ...[
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: ValueListenableBuilder<VoidCallback?>(
-                    valueListenable: quizLogoutNotifier,
-                    builder: (context, logoutCb, _) {
-                      if (logoutCb == null) return const SizedBox.shrink();
-                      return _HoverButton(
-                        icon: Icons.logout_rounded,
-                        tooltip: 'Sair do quiz (Logoff)',
-                        onTap: logoutCb,
-                      );
-                    },
-                  ),
-                ),
-                // Navegação entre slides — sempre disponível no takeover
+              // 7. Navegação inferior — só no takeover (setas dentro do quiz)
+              if (_isQuizTakeover)
                 Positioned(
                   bottom: 10,
                   left: 0,
@@ -591,51 +580,6 @@ class _PresentationViewerState extends State<PresentationViewer>
                     ],
                   ),
                 ),
-              ],
-
-              // 8. Botão sair tela cheia + login (em fullscreen normal)
-              if (_isFullScreen && !_isQuizTakeover)
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: ValueListenableBuilder<VoidCallback?>(
-                    valueListenable: quizLoginNotifier,
-                    builder: (context, loginCallback, _) {
-                      final showLogin =
-                          _currentSlideIsQuiz && loginCallback != null;
-                      return Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (showLogin)
-                            _HoverButton(
-                              icon: Icons.login_rounded,
-                              tooltip: 'Fazer login no quiz',
-                              onTap: loginCallback,
-                            ),
-                          ValueListenableBuilder<VoidCallback?>(
-                            valueListenable: quizLogoutNotifier,
-                            builder: (context, logoutCallback, _) {
-                              if (!_currentSlideIsQuiz ||
-                                  logoutCallback == null) {
-                                return const SizedBox.shrink();
-                              }
-                              return _HoverButton(
-                                icon: Icons.logout_rounded,
-                                tooltip: 'Sair do quiz (Logoff)',
-                                onTap: logoutCallback,
-                              );
-                            },
-                          ),
-                          _HoverButton(
-                            icon: Icons.fullscreen_exit,
-                            tooltip: 'Sair tela cheia',
-                            onTap: _exitFullScreen,
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
             ],
           ),
         ),
@@ -646,6 +590,7 @@ class _PresentationViewerState extends State<PresentationViewer>
   // ── Background animado ────────────────────────────────────────────────────
 
   Widget _buildBg() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final centers = [
       const Alignment(-0.7, -0.5),
       const Alignment(0.6, -0.4),
@@ -654,6 +599,7 @@ class _PresentationViewerState extends State<PresentationViewer>
       const Alignment(0.0, -0.8),
     ];
     final center = centers[_currentIndex % centers.length];
+    final baseColor = isDark ? Colors.black : const Color(0xFFF0F4FF);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 900),
       curve: Curves.easeInOut,
@@ -662,9 +608,9 @@ class _PresentationViewerState extends State<PresentationViewer>
           center: center,
           radius: 1.6,
           colors: [
-            _accent.withValues(alpha: 0.12),
-            _accent2.withValues(alpha: 0.04),
-            Colors.black,
+            _accent.withValues(alpha: isDark ? 0.12 : 0.08),
+            _accent2.withValues(alpha: isDark ? 0.04 : 0.03),
+            baseColor,
           ],
           stops: const [0.0, 0.5, 1.0],
         ),
@@ -830,16 +776,17 @@ class _PresentationViewerState extends State<PresentationViewer>
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.06),
+                color: Colors.black.withValues(alpha: 0.45),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.10),
+                  color: Colors.white.withValues(alpha: 0.20),
                   width: 0.5,
                 ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Login/logout do quiz
                   if (showLogin)
                     _ControlBtn(
                       icon: Icons.login_rounded,
@@ -859,14 +806,19 @@ class _PresentationViewerState extends State<PresentationViewer>
                       );
                     },
                   ),
-                  _ControlBtn(
-                    icon: _showThumbnails
-                        ? Icons.view_sidebar
-                        : Icons.view_sidebar_outlined,
-                    tooltip: 'Painel de miniaturas',
-                    onTap: () =>
-                        setState(() => _showThumbnails = !_showThumbnails),
-                  ),
+
+                  // Painel de miniaturas (oculto em fullscreen e takeover)
+                  if (!_isFullScreen && !_isQuizTakeover)
+                    _ControlBtn(
+                      icon: _showThumbnails
+                          ? Icons.view_sidebar
+                          : Icons.view_sidebar_outlined,
+                      tooltip: 'Painel de miniaturas',
+                      onTap: () =>
+                          setState(() => _showThumbnails = !_showThumbnails),
+                    ),
+
+                  // Alternador de tema — sempre visível
                   ValueListenableBuilder(
                     valueListenable: quizThemeModeNotifier,
                     builder: (context, mode, _) => _ControlBtn(
@@ -884,12 +836,25 @@ class _PresentationViewerState extends State<PresentationViewer>
                       },
                     ),
                   ),
-                  _ControlBtn(
-                    icon: Icons.fullscreen,
-                    tooltip: 'Tela cheia (F5)',
-                    onTap: _enterFullScreen,
-                  ),
-                  if (PresenterChannel.hasMultipleScreens)
+
+                  // Fullscreen / sair fullscreen — oculto no takeover
+                  // (o quiz tem seu próprio botão)
+                  if (!_isQuizTakeover)
+                    _ControlBtn(
+                      icon: _isFullScreen
+                          ? Icons.fullscreen_exit
+                          : Icons.fullscreen,
+                      tooltip: _isFullScreen
+                          ? 'Sair tela cheia'
+                          : 'Tela cheia (F5)',
+                      onTap:
+                          _isFullScreen ? _exitFullScreen : _enterFullScreen,
+                    ),
+
+                  // Modo apresentador (só quando há múltiplos monitores e não em fullscreen/takeover)
+                  if (!_isFullScreen &&
+                      !_isQuizTakeover &&
+                      PresenterChannel.hasMultipleScreens)
                     _ControlBtn(
                       icon: Icons.present_to_all_outlined,
                       tooltip: 'Modo apresentador',
@@ -998,8 +963,9 @@ class _PresentationViewerState extends State<PresentationViewer>
   // ── Painel de miniaturas ──────────────────────────────────────────────────
 
   Widget _buildThumbnailPanel(PresentationData pres) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      color: const Color(0xFF0A1628),
+      color: isDark ? const Color(0xFF0A1628) : const Color(0xFFE4E8F4),
       child: ListView.builder(
         controller: _thumbScrollController,
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1048,7 +1014,13 @@ class _PresentationViewerState extends State<PresentationViewer>
               child: Text(
                 '${index + 1}',
                 style: TextStyle(
-                  color: isSelected ? Colors.white : Colors.white38,
+                  color: isSelected
+                      ? (Theme.of(context).brightness == Brightness.dark
+                          ? Colors.white
+                          : const Color(0xFF1A1A2E))
+                      : (Theme.of(context).brightness == Brightness.dark
+                          ? Colors.white38
+                          : Colors.black38),
                   fontSize: 11,
                 ),
               ),
@@ -1432,7 +1404,7 @@ class _ControlBtnState extends State<_ControlBtn>
       onEnter: (_) => setHovered(true),
       onExit: (_) => setHovered(false),
       child: AnimatedOpacity(
-        opacity: hovered ? 1.0 : 0.5,
+        opacity: hovered ? 1.0 : 0.85,
         duration: const Duration(milliseconds: 150),
         child: Tooltip(
           message: widget.tooltip,
@@ -1588,7 +1560,9 @@ class _ThumbnailResizeHandleState extends State<_ThumbnailResizeHandle>
           width: 6,
           color: hovered
               ? const Color(0xFF00BCD4).withValues(alpha: 0.5)
-              : Colors.white.withValues(alpha: 0.06),
+              : (Theme.of(context).brightness == Brightness.dark
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.black.withValues(alpha: 0.06)),
           child: Center(
             child: Container(
               width: 2,
