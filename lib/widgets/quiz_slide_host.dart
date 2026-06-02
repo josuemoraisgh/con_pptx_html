@@ -230,6 +230,19 @@ class _QuizAuthOverlayState extends State<QuizAuthOverlay> {
 
     final participantNames =
         await _loadParticipantsCached(participantsAssetPath);
+
+    // Sem participantes configurados → login automático como convidado.
+    // Cobre o caso de publicação em GitHub Pages / ambientes públicos onde
+    // não há lista de alunos e a apresentação deve funcionar sem interação.
+    if (participantNames.isEmpty) {
+      quizGlobalUserNotifier.value = const moodle_quiz.LocalUserEntity(
+        id: -1,
+        name: 'Convidado',
+        isTeacher: false,
+      );
+      return const SizedBox.shrink();
+    }
+
     final students = List<moodle_quiz.StudentEntity>.generate(
       participantNames.length,
       (i) => moodle_quiz.StudentEntity(id: i + 1, name: participantNames[i]),

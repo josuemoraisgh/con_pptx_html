@@ -331,7 +331,9 @@ class _CodeGen {
   String _slide(SlideData s) {
     final parts = <String>['index: ${s.index}'];
     final elems = s.elements.map(_element).join(',\n      ');
-    parts.add('elements: [\n      $elems,\n    ]');
+    parts.add(elems.isEmpty
+        ? 'elements: []'
+        : 'elements: [\n      $elems,\n    ]');
     final bg = _background(s.background);
     if (bg != null) parts.add('background: $bg');
     if (s.animSteps.isNotEmpty) {
